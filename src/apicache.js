@@ -290,7 +290,8 @@ function ApiCache() {
     return next()
   }
 
-  var NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
+  var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
+  var CACHE_CONTROL_NO_CACHE_REGEXP = /(?:^|,)\s*?no-cache\s*?(?:,|$)/
   function sendCachedResponse(request, response, cacheObject, toggle, next, duration) {
     if (toggle && !toggle(request, response)) {
       return next()
@@ -320,12 +321,19 @@ function ApiCache() {
       })
     }
 
+    var clientDoesntWantToReloadItsCache = function() {
+      return (
+        !request.headers['cache-control'] ||
+        !CACHE_CONTROL_NO_CACHE_REGEXP.test(request.headers['cache-control'])
+      )
+    }
     // test Etag against If-None-Match for 304
     var isEtagFresh = function() {
-      var cachedEtag = cacheObject.headers.etag
+      var cachedEtag = cacheObjectHeaders.etag
       var requestEtags = (request.headers['if-none-match'] || '').replace('*', '').split(/\s*,\s*/)
       return Boolean(
         cachedEtag &&
+          requestEtags.length > 0 &&
           (requestEtags.indexOf(cachedEtag) !== -1 ||
             requestEtags.indexOf('W/' + cachedEtag) !== -1 ||
             requestEtags
@@ -335,7 +343,19 @@ function ApiCache() {
               .indexOf(cachedEtag) !== -1)
       )
     }
-    if (isEtagFresh()) {
+    var isResourceFresh = function() {
+      var cachedLastModified = cacheObjectHeaders['last-modified']
+      var requestModifiedSince = request.headers['if-modified-since']
+      var requestUnmodifiedSince = request.headers['if-unmodified-since']
+      if (!cachedLastModified || !requestModifiedSince || requestUnmodifiedSince) return false
+
+      try {
+        return Date.parse(cachedLastModified) <= Date.parse(requestModifiedSince)
+      } catch (err) {
+        return false
+      }
+    }
+    if (clientDoesntWantToReloadItsCache() && (isEtagFresh() || isResourceFresh())) {
       if ('content-length' in headers) delete headers['content-length']
       response.writeHead(304, headers)
       return response.end()
@@ -363,7 +383,8 @@ function ApiCache() {
 
     var cachedEncoding = (headers['content-encoding'] || 'identity').split(',')[0]
     if (
-      (cachedEncoding === 'identity' || !NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
+      (cachedEncoding === 'identity' ||
+        !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
       (request.acceptsEncodings || request.acceptsEncoding).call(request, cachedEncoding)
     ) {
       response.writeHead(cacheObject.status || 200, headers)
