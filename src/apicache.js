@@ -235,7 +235,8 @@ function ApiCache() {
           return req.apicacheGroup
         }
         var expireCallback = globalOptions.events.expire
-        return (wstream = (redisCache || memCache)
+        var cache = redisCache || memCache
+        return (wstream = cache
           .createWriteStream(
             key,
             getCacheObject,
@@ -257,7 +258,7 @@ function ApiCache() {
                 debug('error in makeResponseCacheable function')
               })
               .on('finish', function() {
-                debugCacheAddition(redisCache, key, strDuration, req, res)
+                debugCacheAddition(cache, key, strDuration, req, res)
               })
           }))
       }
@@ -289,6 +290,7 @@ function ApiCache() {
     return next()
   }
 
+  var NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
   function sendCachedResponse(request, response, cacheObject, toggle, next, duration) {
     if (toggle && !toggle(request, response)) {
       return next()
@@ -328,31 +330,46 @@ function ApiCache() {
       return response.end()
     }
 
-    var rstream = (redisCache || memCache)
-      .createReadStream(
-        cacheObject.key,
-        cacheObject['data-token'] || cacheObject.data,
-        cacheObject.encoding,
-        response.socket.writableHighWaterMark
-      )
-      .on('error', function() {
-        debug('error in sendCachedResponse function')
-        response.end()
-      })
+    if (request.method === 'HEAD') {
+      response.writeHead(cacheObject.status || 200, headers)
+      // skip body for HEAD
+      return response.end()
+    }
+
+    var getRstream = function() {
+      return (redisCache || memCache)
+        .createReadStream(
+          cacheObject.key,
+          cacheObject['data-token'] || cacheObject.data,
+          cacheObject.encoding,
+          response.socket.writableHighWaterMark
+        )
+        .on('error', function() {
+          debug('error in sendCachedResponse function')
+          response.end()
+        })
+    }
 
     var cachedEncoding = (headers['content-encoding'] || 'identity').split(',')[0]
-    if ((request.acceptsEncodings || request.acceptsEncoding).call(request, cachedEncoding)) {
+    if (
+      (cachedEncoding === 'identity' || !NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
+      (request.acceptsEncodings || request.acceptsEncoding).call(request, cachedEncoding)
+    ) {
       response.writeHead(cacheObject.status || 200, headers)
-      return rstream.pipe(response)
-    } else {
+      return getRstream().pipe(response)
+      // try to decompress
+    } else if (
+      cachedEncoding !== 'identity' &&
+      (request.acceptsEncodings || request.acceptsEncoding).call(request, 'identity')
+    ) {
       var tstream
       if (cachedEncoding === 'br' && zlib.createBrotliDecompress) {
         tstream = zlib.createBrotliDecompress()
       } else if (['gzip', 'deflate'].indexOf(cachedEncoding) !== -1) {
         tstream = zlib.createUnzip()
       } else {
-        response.writeHead(415, 'Unsupported Media Type')
-        return response.end()
+        var errorMessage = "can't decompress" + cachedEncoding + 'encoding'
+        throw new Error(errorMessage)
       }
 
       headers['content-encoding'] = 'identity'
@@ -364,7 +381,18 @@ function ApiCache() {
         if (!this.destroy) return this.pause()
         this.destroy()
       })
-      return rstream.pipe(tstream).pipe(response)
+      return getRstream()
+        .pipe(tstream)
+        .pipe(response)
+    } else {
+      var contentEncodings = Array.from(new Set([cachedEncoding, 'identity']))
+      var statusMessage =
+        'Please accept' +
+        contentEncodings.slice(0, -1).join(', ') +
+        contentEncodings.slice(-1).join(', or ')
+
+      response.writeHead(406, statusMessage)
+      return response.end()
     }
   }
 
@@ -697,6 +725,25 @@ function ApiCache() {
         key += '$$appendKey=' + appendKey
       }
 
+      var _makeResponseCacheable = function() {
+        try {
+          perf.miss(key)
+          return makeResponseCacheable(
+            req,
+            res,
+            next,
+            key,
+            duration,
+            strDuration,
+            middlewareToggle,
+            opt
+          )
+        } catch (err) {
+          debug(err)
+          return next()
+        }
+      }
+
       // attempt cache hit
       var cachedPromise = !redisCache
         ? Promise.resolve(memCache.getValue(key))
@@ -716,33 +763,26 @@ function ApiCache() {
             )
 
             perf.hit(key)
-            return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
+            try {
+              return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
+            } catch (err) {
+              debug(err)
+              if (req.headersSent) {
+                perf.miss(key)
+                return res.end()
+              }
+
+              return _makeResponseCacheable()
+            }
           } else {
-            perf.miss(key)
-            return makeResponseCacheable(
-              req,
-              res,
-              next,
-              key,
-              duration,
-              strDuration,
-              middlewareToggle,
-              opt
-            )
+            return _makeResponseCacheable()
           }
         })
-        .catch(function() {
+        .catch(function(err) {
+          debug(err)
           perf.miss(key)
-          return makeResponseCacheable(
-            req,
-            res,
-            next,
-            key,
-            duration,
-            strDuration,
-            middlewareToggle,
-            opt
-          )
+          if (req.headersSent) res.end()
+          else next()
         })
     }
 
