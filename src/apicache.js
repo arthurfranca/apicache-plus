@@ -321,10 +321,21 @@ function ApiCache() {
     }
 
     // test Etag against If-None-Match for 304
-    var cachedEtag = cacheObject.headers.etag
-    var requestEtag = request.headers['if-none-match']
-
-    if (requestEtag && cachedEtag === requestEtag) {
+    var isEtagFresh = function() {
+      var cachedEtag = cacheObject.headers.etag
+      var requestEtags = (request.headers['if-none-match'] || '').replace('*', '').split(/\s*,\s*/)
+      return Boolean(
+        cachedEtag &&
+          (requestEtags.indexOf(cachedEtag) !== -1 ||
+            requestEtags.indexOf('W/' + cachedEtag) !== -1 ||
+            requestEtags
+              .map(function(rEtag) {
+                return 'W/' + rEtag
+              })
+              .indexOf(cachedEtag) !== -1)
+      )
+    }
+    if (isEtagFresh()) {
       if ('content-length' in headers) delete headers['content-length']
       response.writeHead(304, headers)
       return response.end()
@@ -767,7 +778,7 @@ function ApiCache() {
               return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
             } catch (err) {
               debug(err)
-              if (req.headersSent) {
+              if (res.headersSent) {
                 perf.miss(key)
                 return res.end()
               }
@@ -781,7 +792,7 @@ function ApiCache() {
         .catch(function(err) {
           debug(err)
           perf.miss(key)
-          if (req.headersSent) res.end()
+          if (res.headersSent) res.end()
           else next()
         })
     }
