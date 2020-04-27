@@ -281,7 +281,7 @@ function ApiCache() {
       res.end = function(chunk, encoding) {
         if (Buffer.byteLength(chunk || '') > 0) {
           this.write(chunk, encoding)
-          arguments[0] = null
+          arguments[0] = undefined
         }
         return _end.apply(this, arguments)
       }
@@ -346,8 +346,7 @@ function ApiCache() {
     var isResourceFresh = function() {
       var cachedLastModified = cacheObjectHeaders['last-modified']
       var requestModifiedSince = request.headers['if-modified-since']
-      var requestUnmodifiedSince = request.headers['if-unmodified-since']
-      if (!cachedLastModified || !requestModifiedSince || requestUnmodifiedSince) return false
+      if (!cachedLastModified || !requestModifiedSince) return false
 
       try {
         return Date.parse(cachedLastModified) <= Date.parse(requestModifiedSince)
@@ -355,7 +354,11 @@ function ApiCache() {
         return false
       }
     }
-    if (clientDoesntWantToReloadItsCache() && (isEtagFresh() || isResourceFresh())) {
+    if (
+      !request.headers['if-unmodified-since'] &&
+      clientDoesntWantToReloadItsCache() &&
+      (isEtagFresh() || isResourceFresh())
+    ) {
       if ('content-length' in headers) delete headers['content-length']
       response.writeHead(304, headers)
       return response.end()

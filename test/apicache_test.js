@@ -825,16 +825,111 @@ describe('.middleware {MIDDLEWARE}', function() {
 
         return request(app)
           .get('/api/movies')
-          .expect(200)
+          .expect(200, movies)
           .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers['last-modified']).to.be.undefined
             return res.headers.etag
           })
           .then(function(etag) {
             return request(app)
               .get('/api/movies')
               .set('if-none-match', etag)
-              .expect(304)
+              .expect(304, '')
               .expect('etag', etag)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it('respects if-modified-since header', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.etag).to.be.undefined
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('if-modified-since', lastModified)
+              .expect(304, '')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it("don't send 304 if set if-unmodified-since header", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.etag).to.be.undefined
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('if-unmodified-since', new Date().toUTCString())
+              .set('if-modified-since', lastModified)
+              .expect(200, 'hi')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it('support end-to-end reload requests', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.etag).to.be.undefined
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('cache-control', 'no-cache')
+              .set('if-modified-since', lastModified)
+              .expect(200, 'hi')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it('send empty body for HEAD requests', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            return request(app)
+              .head('/api/movies')
+              .expect(200, undefined)
+              .then(function(cachedRes) {
+                expect(res.headers['content-type']).to.exist
+                expect(res.headers['content-type']).to.eql(cachedRes.headers['content-type'])
+                expect(app.requestsProcessed).to.equal(1)
+              })
           })
       })
 
@@ -930,7 +1025,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         setTimeout(function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           done()
-        }, 25)
+        }, 30)
       })
 
       it('executes expiration callback from globalOptions.events.expire upon entry expiration', function(done) {
@@ -955,13 +1050,14 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('clearing cache cancels expiration callback', function(done) {
-        var app = mockAPI.create(20)
+        var app = mockAPI.create(30)
 
         request(app)
           .get('/api/movies')
           .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
+            expect(app.requestsProcessed).to.equal(1)
           })
 
         setTimeout(function() {
@@ -970,14 +1066,15 @@ describe('.middleware {MIDDLEWARE}', function() {
             .end(function(_err, res) {
               expect(app.apicache.getIndex().all.length).to.equal(1)
               expect(app.apicache.getIndex().all).to.include('/api/movies')
+              expect(app.requestsProcessed).to.equal(2)
             })
-        }, 10)
+        }, 15)
 
         setTimeout(function() {
           expect(app.apicache.getIndex().all.length).to.equal(1)
           expect(app.apicache.getIndex().all).to.include('/api/movies')
           done()
-        }, 18)
+        }, 35)
       })
 
       it('allows defaultDuration to be a parseable string (e.g. "1 week")', function(done) {
@@ -1028,6 +1125,51 @@ compressionApis.forEach(function(api) {
             db.flushdb(done)
           })
         }
+
+        it('can send compressed cache', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', 'deflate, gzip')
+            .expect('Content-Encoding', 'gzip')
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', '*')
+                .expect('Content-Encoding', 'gzip')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('respect cache-control no-transform value', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/notransform')
+            .set('Accept-Encoding', 'deflate, gzip')
+            .expect(200, 'hi')
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/notransform')
+                .set('Accept-Encoding', '*')
+                .expect(200, 'hi')
+            })
+            .then(function(res) {
+              expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
 
         it('can use cache with compression mismatch', function() {
           var app = mockAPI.create('10 seconds', meta.config)

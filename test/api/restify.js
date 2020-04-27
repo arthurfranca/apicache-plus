@@ -22,6 +22,12 @@ function MockAPI(expiration, options, toggle, localOptions) {
 
   app.use(require('restify-etag-cache')())
 
+  // mimic express behavior of auto responding to .head requests
+  var _get = app.get
+  app.get = function() {
+    app.head.apply(this, arguments)
+    return _get.apply(this, arguments)
+  }
   // ADD API ROUTES
   app = addRoutes(app)
 

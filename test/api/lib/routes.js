@@ -117,5 +117,26 @@ module.exports = function(app) {
     }, 100)
   })
 
+  app.get('/api/ifmodifiedsince', function(req, res) {
+    app.requestsProcessed++
+
+    var _setHeader = res.setHeader
+    res.setHeader = function(name) {
+      if (name === 'etag') return res
+      return _setHeader.apply(res, arguments)
+    }
+    res.writeHead(200, { 'Last-Modified': new Date().toUTCString() })
+    res.write('hi')
+    res.end()
+  })
+
+  app.get('/api/notransform', function(req, res) {
+    app.requestsProcessed++
+
+    res.writeHead(200, { 'Cache-Control': 'no-transform' })
+    res.write('hi')
+    res.end()
+  })
+
   return app
 }
