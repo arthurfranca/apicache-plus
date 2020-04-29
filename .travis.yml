@@ -8,5 +8,9 @@ node_js:
   - 12.0.0
   - 13.0.0
   - 14.0.0
-install: npm install
+install:
+  - npm ci
+cache:
+  directories:
+    - '$HOME/.npm'
 after_success: npm run coverage
