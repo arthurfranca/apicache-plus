@@ -2,10 +2,10 @@
 
 #### Supports Redis or built-in memory engine with auto-clearing.
 
-[![npm version](https://badge.fury.io/js/apicache.svg)](https://www.npmjs.com/package/apicache)
-[![node version support](https://img.shields.io/node/v/apicache.svg)](https://www.npmjs.com/package/apicache)
-[![Build Status via Travis CI](https://travis-ci.org/kwhitley/apicache.svg?branch=master)](https://travis-ci.org/kwhitley/apicache)
-[![Coverage Status](https://coveralls.io/repos/github/kwhitley/apicache/badge.svg?branch=master)](https://coveralls.io/github/kwhitley/apicache?branch=master)
+[![npm version](https://badge.fury.io/js/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
+[![node version support](https://img.shields.io/node/v/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
+[![Build Status via Travis CI](https://travis-ci.org/arthurfranca/apicache.svg?branch=master)](https://travis-ci.org/arthurfranca/apicache-plus)
+[![Coverage Status](https://coveralls.io/repos/github/arthurfranca/apicache-plus/badge.svg?branch=master)](https://coveralls.io/github/arthurfranca/apicache-plus?branch=master)
 [![NPM downloads](https://img.shields.io/npm/dt/apicache.svg?style=flat-square)](https://www.npmjs.com/package/apicache)
 
 ## Why?
@@ -20,7 +20,7 @@ To use, simply inject the middleware (example: `apicache.middleware('5 minutes',
 
 ```js
 import express from 'express'
-import apicache from 'apicache'
+import apicache from 'apicache-plus'
 
 let app = express()
 let cache = apicache.middleware
@@ -47,24 +47,29 @@ app.get('/will-be-cached', (req, res) => {
 
 ```js
 import express from 'express'
-import apicache from 'apicache'
+import apicache from 'apicache-plus'
 import redis from 'redis'
 
 let app = express()
 
 // if redisClient option is defined, apicache will use redis client
 // instead of built-in memory store
-let cacheWithRedis = apicache.options({ redisClient: redis.createClient() }).middleware
+let cacheWithRedis = apicache.options({
+  redisClient: redis.createClient({ detect_buffers: true }),
+}).middleware
 
 app.get('/will-be-cached', cacheWithRedis('5 minutes'), (req, res) => {
   res.json({ success: true })
 })
 ```
 
+**Note:** If using node-redis client, it is important to set `detect_buffers: true` option.
+ioredis client is also supported.
+
 #### Cache grouping and manual controls
 
 ```js
-import apicache from 'apicache'
+import apicache from 'apicache-plus'
 let cache = apicache.middleware
 
 app.use(cache('5 minutes'))
@@ -189,7 +194,7 @@ would enable us to clear all cached "post" requests if we updated something in t
 for instance. Adding a simple `req.apicacheGroup = [somevalue];` to your route enables this. See example below:
 
 ```js
-var apicache = require('apicache')
+var apicache = require('apicache-plus')
 var cache = apicache.middleware
 
 // GET collection/id
@@ -233,7 +238,7 @@ $ export DEBUG=apicache,othermoduleThatDebugModuleWillPickUp,etc
 #### By setting internal option
 
 ```js
-import apicache from 'apicache'
+import apicache from 'apicache-plus'
 
 apicache.options({ debug: true })
 ```
@@ -245,68 +250,6 @@ routes to be cached from your public client, but NOT cached when from the admin 
 is achieved by sending a `"x-apicache-bypass": true` header along with the requst from the admin.
 The presence of this header flag will bypass the cache, ensuring you aren't looking at stale data.
 
-## Contributors
-
-Special thanks to all those that use this library and report issues, but especially to the following active users that have helped add to the core functionality!
-
-- [@killdash9](https://github.com/killdash9) - restify support, performance/stats system, and too much else at this point to list
-- [@svozza](https://github.com/svozza) - added restify tests, test suite refactor, and fixed header issue with restify. Node v7 + Restify v5 conflict resolution, etag/if-none-match support, etcetc, etc. Triple thanks!!!
-- [@andredigenova](https://github.com/andredigenova) - Added header blacklist as options, correction to caching checks
-- [@peteboere](https://github.com/peteboere) - Node v7 headers update
-- [@rutgernation](https://github.com/rutgernation) - JSONP support
-- [@enricsangra](https://github.com/enricsangra) - added x-apicache-force-fetch header
-- [@tskillian](https://github.com/tskillian) - custom appendKey path support
-- [@agolden](https://github.com/agolden) - Content-Encoding preservation (for gzip, etc)
-- [@davidyang](https://github.com/davidyang) - express 4+ compatibility
-- [@nmors](https://github.com/nmors) - redis support
-- [@maytis](https://github.com/maytis), [@ashwinnaidu](https://github.com/ashwinnaidu) - redis expiration
-- [@ubergesundheit](https://github.com/ubergesundheit) - Corrected buffer accumulation using res.write with Buffers
-- [@danielsogl](https://github.com/danielsogl) - Keeping dev deps up to date, Typescript Types
-- [@vectart](https://github.com/vectart) - Added middleware local options support
-- [@davebaol](https://github.com/davebaol) - Added string support to defaultDuration option (previously just numeric ms)
-- [@Rauttis](https://github.com/rauttis) - Added ioredis support
-- [@fernandolguevara](https://github.com/fernandolguevara) - Added opt-out for performance tracking, great emergency fix, thank you!!
-
-### Bugfixes, tweaks, documentation, etc.
-
-- @Amhri, @Webcascade, @conmarap, @cjfurelid, @scambier, @lukechilds, @Red-Lv, @gesposito, @viebel, @RowanMeara, @GoingFast, @luin, @keithws, @daveross, @apascal, @guybrush
-
 ### Changelog
 
-- **v1.5.3** - multiple fixes: Redis should be connected before using (thanks @guybrush)
-- **v1.5.2** - multiple fixes: Buffer deprecation and \_headers deprecation, { trackPerformance: false } by default per discussion (sorry semver...)
-- **v1.5.1** - adds { trackPerformance } option to enable/disable performance tracking (thanks @fernandolguevara)
-- **v1.5.0** - exposes apicache.getPerformance() for per-route cache metrics (@killdash9 continues to deliver)
-- **v1.4.0** - cache-control header now auto-decrements in cached responses (thanks again, @killdash9)
-- **v1.3.0** - [securityfix] apicache headers no longer embedded in cached responses when NODE_ENV === 'production' (thanks for feedback @satya-jugran, @smddzcy, @adamelliotfields). Updated deps, now requiring Node v6.00+.
-- **v1.2.6** - middlewareToggle() now prevents response block on cache hit + falsy toggle (thanks @apascal)
-- **v1.2.5** - uses native Node setHeader() rather than express.js header() (thanks @keithws and @daveross)
-- **v1.2.4** - force content type to Buffer, using old and new Buffer creation syntax
-- **v1.2.3** - add etag to if-none-match 304 support (thanks for the test/issue @svozza)
-- **v1.2.2** - bugfix: ioredis.expire params (thanks @GoingFast and @luin)
-- **v1.2.1** - Updated deps
-- **v1.2.0** - Supports ioredis (thanks @Rauttis)
-- **v1.1.1** - bugfixes in expiration timeout clearing and content header preservation under compression (thanks @RowanMeara and @samimakicc).
-- **v1.1.0** - added the much-requested feature of a custom appendKey function (previously only took a path to a single request attribute). Now takes (request, response) objects and returns some value to be appended to the cache key.
-- **v1.0.0** - stamping v0.11.2 into official production version, will now begin developing on branch v2.x (redesign)
-- **v0.11.2** - dev-deps update, courtesy of @danielsogl
-- **v0.11.1** - correction to status code caching, and max-age headers are no longer sent when not cached. middlewareToggle now works as intended with example of statusCode checking (checks during shouldCacheResponse cycle)
-- **v0.11.0** - Added string support to defaultDuration option, previously just numeric ms - thanks @davebaol
-- **v0.10.0** - added ability to blacklist headers (prevents caching) via options.headersBlacklist (thanks @andredigenova)
-- **v0.9.1** - added eslint in prep for v1.x branch, minor ES6 to ES5 in master branch tests
-- **v0.9.0** - corrected Node v7.7 & v8 conflicts with restify (huge thanks to @svozza
-  for chasing this down and fixing upstream in restify itself). Added coveralls. Added
-  middleware.localOptions support (thanks @vectart). Added ability to overwrite/embed headers
-  (e.g. "cache-control": "no-cache") through options.
-- **v0.8.8** - corrected to use node v7+ headers (thanks @peteboere)
-- **v0.8.6, v0.8.7** - README update
-- **v0.8.5** - dev dependencies update (thanks @danielsogl)
-- **v0.8.4** - corrected buffer accumulation, with test support (thanks @ubergesundheit)
-- **v0.8.3** - added tests for x-apicache-bypass and x-apicache-force-fetch (legacy) and fixed a bug in the latter (thanks @Red-Lv)
-- **v0.8.2** - test suite and mock API refactor (thanks @svozza)
-- **v0.8.1** - fixed restify support and added appropriate tests (thanks @svozza)
-- **v0.8.0** - modifies response accumulation (thanks @killdash9) to support res.write + res.end accumulation, allowing integration with restify. Adds gzip support (Node v4.3.2+ now required) and tests.
-- **v0.7.0** - internally sets cache-control/max-age headers of response object
-- **v0.6.0** - removed final dependency (debug) and updated README
-- **v0.5.0** - updated internals to use res.end instead of res.send/res.json/res.jsonp, allowing for any response type, adds redis tests
-- **v0.4.0** - dropped lodash and memory-cache external dependencies, and bumped node version requirements to 4.0.0+ to allow Object.assign native support
+- **v1.5.4** - created apicache-plus from apicache v1.5.3 with backward compatibility (thanks [@kwhitley](https://github.com/kwhitley) and [all original library contributors](https://github.com/kwhitley/apicache#contributors))
