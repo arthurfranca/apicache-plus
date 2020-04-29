@@ -8,5 +8,5 @@ node_js:
   - 12.0.0
   - 13.0.0
   - 14.0.0
-install: yarn install --ignore-engines
+install: npm install
 after_success: npm run coverage
