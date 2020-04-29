@@ -1033,7 +1033,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         var cb = function(a, b) {
           callbackResponse = b
         }
-        var app = mockAPI.create(10, { events: { expire: cb } })
+        var app = mockAPI.create(15, { events: { expire: cb } })
 
         request(app)
           .get('/api/movies')
@@ -1046,7 +1046,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           expect(callbackResponse).to.equal('/api/movies')
           done()
-        }, 25)
+        }, 35)
       })
 
       it('clearing cache cancels expiration callback', function(done) {
@@ -1095,7 +1095,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           expect(callbackResponse).to.equal('/api/movies')
           done()
-        }, 25)
+        }, 30)
       })
     })
   })
