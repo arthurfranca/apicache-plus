@@ -2,12 +2,9 @@ var express = require('express')
 var compression = require('compression')
 var addRoutes = require('./lib/routes')
 
-function MockAPI(expiration, options, toggle) {
+function MockAPI(expiration, options, toggle, localOptions) {
   var apicache = require('../../src/apicache').newInstance(options)
   var app = express()
-
-  // ENABLE COMPRESSION
-  app.use(compression({ threshold: 1 }))
 
   // EMBED UPSTREAM RESPONSE PARAM
   app.use(function(req, res, next) {
@@ -16,8 +13,11 @@ function MockAPI(expiration, options, toggle) {
   })
 
   // ENABLE APICACHE
-  app.use(apicache.middleware(expiration, toggle))
+  app.use(apicache.middleware(expiration, toggle, localOptions))
   app.apicache = apicache
+
+  // ENABLE COMPRESSION
+  app.use(compression({ threshold: 1 }))
 
   // ADD API ROUTES
   app = addRoutes(app)
@@ -26,5 +26,7 @@ function MockAPI(expiration, options, toggle) {
 }
 
 module.exports = {
-  create: function(expiration, config, toggle) { return new MockAPI(expiration, config, toggle) }
+  create: function(expiration, config, toggle, extraConfig) {
+    return new MockAPI(expiration, config, toggle, extraConfig)
+  },
 }

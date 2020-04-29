@@ -1,5 +1,7 @@
 var url = require('url')
+var zlib = require('zlib')
 var MemoryCache = require('./memory-cache')
+var RedisCache = require('./redis-cache')
 var pkg = require('../package.json')
 
 var t = {
@@ -37,6 +39,7 @@ function getSafeHeaders(res) {
 
 function ApiCache() {
   var memCache = new MemoryCache()
+  var redisCache
 
   var globalOptions = {
     debug: false,
@@ -45,6 +48,7 @@ function ApiCache() {
     appendKey: [],
     jsonp: false,
     redisClient: false,
+    redisPrefix: '',
     headerBlacklist: [],
     statusCodes: {
       include: [],
@@ -68,20 +72,23 @@ function ApiCache() {
   instances.push(this)
   this.id = instances.length
 
+  function shouldDebug() {
+    var debugEnv = process.env.DEBUG && process.env.DEBUG.split(',').indexOf('apicache') !== -1
+
+    return !!(globalOptions.debug || debugEnv)
+  }
+
   function debug(a, b, c, d) {
+    if (!shouldDebug()) return
     var arr = ['\x1b[36m[apicache]\x1b[0m', a, b, c, d].filter(function(arg) {
       return arg !== undefined
     })
-    var debugEnv = process.env.DEBUG && process.env.DEBUG.split(',').indexOf('apicache') !== -1
-
-    return (globalOptions.debug || debugEnv) && console.log.apply(null, arr)
+    console.log.apply(null, arr)
   }
 
-  function shouldCacheResponse(request, response, toggle) {
-    var opt = globalOptions
-    var codes = opt.statusCodes
-
+  function shouldCacheResponse(request, response, toggle, options) {
     if (!response) return false
+    var codes = (options || globalOptions).statusCodes
 
     if (toggle && !toggle(request, response)) {
       return false
@@ -129,20 +136,8 @@ function ApiCache() {
   }
 
   function cacheResponse(key, value, duration) {
-    var redis = globalOptions.redisClient
     var expireCallback = globalOptions.events.expire
-
-    if (redis && redis.connected) {
-      try {
-        redis.hset(key, 'response', JSON.stringify(value))
-        redis.hset(key, 'duration', duration)
-        redis.expire(key, duration / 1000, expireCallback || function() {})
-      } catch (err) {
-        debug('[apicache] error in redis.hset()')
-      }
-    } else {
-      memCache.add(key, value, duration, expireCallback)
-    }
+    memCache.add(key, value, duration, expireCallback)
 
     // add automatic cache clearing from duration, includes max limit on setTimeout
     timers[key] = setTimeout(function() {
@@ -150,32 +145,47 @@ function ApiCache() {
     }, Math.min(duration, 2147483647))
   }
 
-  function accumulateContent(res, content) {
-    if (content) {
-      if (typeof content == 'string') {
-        res._apicache.content = (res._apicache.content || '') + content
-      } else if (Buffer.isBuffer(content)) {
-        var oldContent = res._apicache.content
+  function debugCacheAddition(cache, key, strDuration, req, res) {
+    if (!shouldDebug()) return Promise.resolve()
 
-        if (typeof oldContent === 'string') {
-          oldContent = !Buffer.from ? new Buffer(oldContent) : Buffer.from(oldContent)
-        }
+    var elapsed = new Date() - req.apicacheTimer
+    return Promise.resolve(cache.get(key))
+      .then(function(cached) {
+        var cacheObject
+        if (cached && cached.value) {
+          cached = cached.value
+          cacheObject = createCacheObject(
+            cached.status,
+            cached.headers,
+            cached.data && cached.data.toString(cached.encoding),
+            cached.encoding
+          )
+          cacheObject.timestamp = cached.timestamp
+        } else cacheObject = {}
 
-        if (!oldContent) {
-          oldContent = !Buffer.alloc ? new Buffer(0) : Buffer.alloc(0)
-        }
-
-        res._apicache.content = Buffer.concat(
-          [oldContent, content],
-          oldContent.length + content.length
-        )
-      } else {
-        res._apicache.content = content
-      }
-    }
+        debug('adding cache entry for "' + key + '" @ ' + strDuration, logDuration(elapsed))
+        debug('cacheObject: ', cacheObject)
+      })
+      .catch(function(err) {
+        debug('error debugging cache addition', err)
+      })
   }
 
-  function makeResponseCacheable(req, res, next, key, duration, strDuration, toggle) {
+  var isNodelte7 = (function(ret) {
+    return function() {
+      if (ret !== undefined) return ret
+
+      return (ret = parseInt(process.versions.node.split('.')[0], 10) <= 7)
+    }
+  })()
+  function makeResponseCacheable(req, res, next, key, duration, strDuration, toggle, options) {
+    var shouldCacheRes = (function(shouldIt) {
+      return function(req, res, toggle, options) {
+        if (shouldIt !== undefined) return shouldIt
+        return (shouldIt = shouldCacheResponse(req, res, toggle, options))
+      }
+    })()
+
     // monkeypatch res.end to create cache object
     res._apicache = {
       write: res.write,
@@ -186,76 +196,121 @@ function ApiCache() {
     }
 
     // append header overwrites if applicable
-    Object.keys(globalOptions.headers).forEach(function(name) {
-      res.setHeader(name, globalOptions.headers[name])
+    Object.keys(options.headers).forEach(function(name) {
+      res.setHeader(name, options.headers[name])
     })
 
-    res.writeHead = function() {
+    res.writeHead = function(statusCode) {
+      res.statusCode = statusCode
+
       // add cache control headers
-      if (!globalOptions.headers['cache-control']) {
-        if (shouldCacheResponse(req, res, toggle)) {
-          res.setHeader('cache-control', 'max-age=' + (duration / 1000).toFixed(0))
+      if (!options.headers['cache-control']) {
+        if (shouldCacheRes(req, res, toggle, options)) {
+          res.setHeader(
+            'cache-control',
+            'max-age=' + (duration / 1000).toFixed(0) + ', must-revalidate'
+          )
         } else {
-          res.setHeader('cache-control', 'no-cache, no-store, must-revalidate')
+          res.setHeader('cache-control', 'no-store')
         }
       }
 
-      res._apicache.headers = Object.assign({}, getSafeHeaders(res))
       return res._apicache.writeHead.apply(this, arguments)
     }
 
-    // patch res.write
-    res.write = function(content) {
-      accumulateContent(res, content)
-      return res._apicache.write.apply(this, arguments)
-    }
+    var getWstream = (function(wstream) {
+      return function() {
+        if (wstream) return wstream
 
-    // patch res.end
-    res.end = function(content, encoding) {
-      if (shouldCacheResponse(req, res, toggle)) {
-        accumulateContent(res, content)
-
-        if (res._apicache.cacheable && res._apicache.content) {
-          addIndexEntries(key, req)
-          var headers = res._apicache.headers || getSafeHeaders(res)
-          var cacheObject = createCacheObject(
-            res.statusCode,
-            headers,
-            res._apicache.content,
-            encoding
-          )
-          cacheResponse(key, cacheObject, duration)
-
-          // display log entry
-          var elapsed = new Date() - req.apicacheTimer
-          debug('adding cache entry for "' + key + '" @ ' + strDuration, logDuration(elapsed))
-          debug('_apicache.headers: ', res._apicache.headers)
-          debug('res.getHeaders(): ', getSafeHeaders(res))
-          debug('cacheObject: ', cacheObject)
+        if (!shouldCacheRes(req, res, toggle, options)) {
+          var emptyFn = function() {}
+          return (wstream = Promise.resolve({ write: emptyFn, end: emptyFn }))
         }
-      }
 
-      return res._apicache.end.apply(this, arguments)
+        var getCacheObject = function() {
+          var headers = getSafeHeaders(res)
+          return createCacheObject(res.statusCode, headers)
+        }
+        var getGroup = function() {
+          return req.apicacheGroup
+        }
+        var expireCallback = globalOptions.events.expire
+        var cache = redisCache || memCache
+        return (wstream = cache
+          .createWriteStream(
+            key,
+            getCacheObject,
+            duration,
+            expireCallback,
+            getGroup,
+            res.socket.writableHighWaterMark,
+            // this is needed while memCache index/groups are still handled externally
+            !redisCache &&
+              function(statusCode, headers, data, encoding) {
+                addIndexEntries(key, req)
+                var cacheObject = createCacheObject(statusCode, headers, data, encoding)
+                cacheResponse(key, cacheObject, duration)
+              }
+          )
+          .then(function(wstream) {
+            return wstream
+              .on('error', function() {
+                debug('error in makeResponseCacheable function')
+              })
+              .on('finish', function() {
+                debugCacheAddition(cache, key, strDuration, req, res)
+              })
+          }))
+      }
+    })()
+
+    ;['write', 'end'].forEach(function(method) {
+      var ret
+      res[method] = function(chunk, encoding) {
+        ret = res._apicache[method].apply(this, arguments)
+        getWstream().then(function(wstream) {
+          wstream[method](chunk, encoding)
+        })
+        return ret
+      }
+    })
+
+    // res.end(data) writes data twice
+    if (isNodelte7()) {
+      var _end = res.end
+      res.end = function(chunk, encoding) {
+        if (Buffer.byteLength(chunk || '') > 0) {
+          this.write(chunk, encoding)
+          arguments[0] = undefined
+        }
+        return _end.apply(this, arguments)
+      }
     }
 
-    next()
+    return next()
   }
 
+  var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
+  var CACHE_CONTROL_NO_CACHE_REGEXP = /(?:^|,)\s*?no-cache\s*?(?:,|$)/
   function sendCachedResponse(request, response, cacheObject, toggle, next, duration) {
     if (toggle && !toggle(request, response)) {
       return next()
     }
 
     var headers = getSafeHeaders(response)
+    var cacheObjectHeaders = cacheObject.headers || {}
+    var updatedMaxAge = parseInt(
+      duration / 1000 - (new Date().getTime() / 1000 - cacheObject.timestamp),
+      10
+    )
 
-    Object.assign(headers, filterBlacklistedHeaders(cacheObject.headers || {}), {
+    Object.assign(headers, filterBlacklistedHeaders(cacheObjectHeaders), {
       // set properly-decremented max-age header.  This ensures that max-age is in sync with the cache expiration.
-      'cache-control':
-        'max-age=' +
-        Math.max(
-          0,
-          (duration / 1000 - (new Date().getTime() / 1000 - cacheObject.timestamp)).toFixed(0)
-        ),
+      'cache-control': (
+        cacheObjectHeaders['cache-control'] || 'max-age=' + updatedMaxAge + ', must-revalidate'
+      ).replace(/max-age=\s*([+-]?\d+)/, function(_match, cachedMaxAge) {
+        return 'max-age=' + Math.max(0, Math.min(parseInt(cachedMaxAge, 10), updatedMaxAge))
+      }),
     })
 
     // only embed apicache headers when not in production environment
@@ -266,25 +321,114 @@ function ApiCache() {
       })
     }
 
-    // unstringify buffers
-    var data = cacheObject.data
-    if (data && data.type === 'Buffer') {
-      data =
-        typeof data.data === 'number' ? new Buffer.alloc(data.data) : new Buffer.from(data.data)
+    var clientDoesntWantToReloadItsCache = function() {
+      return (
+        !request.headers['cache-control'] ||
+        !CACHE_CONTROL_NO_CACHE_REGEXP.test(request.headers['cache-control'])
+      )
     }
-
     // test Etag against If-None-Match for 304
-    var cachedEtag = cacheObject.headers.etag
-    var requestEtag = request.headers['if-none-match']
+    var isEtagFresh = function() {
+      var cachedEtag = cacheObjectHeaders.etag
+      var requestEtags = (request.headers['if-none-match'] || '').replace('*', '').split(/\s*,\s*/)
+      return Boolean(
+        cachedEtag &&
+          requestEtags.length > 0 &&
+          (requestEtags.indexOf(cachedEtag) !== -1 ||
+            requestEtags.indexOf('W/' + cachedEtag) !== -1 ||
+            requestEtags
+              .map(function(rEtag) {
+                return 'W/' + rEtag
+              })
+              .indexOf(cachedEtag) !== -1)
+      )
+    }
+    var isResourceFresh = function() {
+      var cachedLastModified = cacheObjectHeaders['last-modified']
+      var requestModifiedSince = request.headers['if-modified-since']
+      if (!cachedLastModified || !requestModifiedSince) return false
 
-    if (requestEtag && cachedEtag === requestEtag) {
+      try {
+        return Date.parse(cachedLastModified) <= Date.parse(requestModifiedSince)
+      } catch (err) {
+        return false
+      }
+    }
+    if (
+      !request.headers['if-unmodified-since'] &&
+      clientDoesntWantToReloadItsCache() &&
+      (isEtagFresh() || isResourceFresh())
+    ) {
+      if ('content-length' in headers) delete headers['content-length']
       response.writeHead(304, headers)
       return response.end()
     }
 
-    response.writeHead(cacheObject.status || 200, headers)
+    if (request.method === 'HEAD') {
+      response.writeHead(cacheObject.status || 200, headers)
+      // skip body for HEAD
+      return response.end()
+    }
 
-    return response.end(data, cacheObject.encoding)
+    var getRstream = function() {
+      return (redisCache || memCache)
+        .createReadStream(
+          cacheObject.key,
+          cacheObject['data-token'] || cacheObject.data,
+          cacheObject.encoding,
+          response.socket.writableHighWaterMark
+        )
+        .on('error', function() {
+          debug('error in sendCachedResponse function')
+          response.end()
+        })
+    }
+
+    var cachedEncoding = (headers['content-encoding'] || 'identity').split(',')[0]
+    if (
+      (cachedEncoding === 'identity' ||
+        !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
+      (request.acceptsEncodings || request.acceptsEncoding).call(request, cachedEncoding)
+    ) {
+      response.writeHead(cacheObject.status || 200, headers)
+      return getRstream().pipe(response)
+      // try to decompress
+    } else if (
+      cachedEncoding !== 'identity' &&
+      (request.acceptsEncodings || request.acceptsEncoding).call(request, 'identity')
+    ) {
+      var tstream
+      if (cachedEncoding === 'br' && zlib.createBrotliDecompress) {
+        tstream = zlib.createBrotliDecompress()
+      } else if (['gzip', 'deflate'].indexOf(cachedEncoding) !== -1) {
+        tstream = zlib.createUnzip()
+      } else {
+        var errorMessage = "can't decompress" + cachedEncoding + 'encoding'
+        throw new Error(errorMessage)
+      }
+
+      headers['content-encoding'] = 'identity'
+      response.writeHead(cacheObject.status || 200, headers)
+      tstream.on('error', function() {
+        debug('error in decompression stream')
+        this.unpipe()
+        // if node < 8
+        if (!this.destroy) return this.pause()
+        this.destroy()
+      })
+      return getRstream()
+        .pipe(tstream)
+        .pipe(response)
+    } else {
+      var contentEncodings = Array.from(new Set([cachedEncoding, 'identity']))
+      var statusMessage =
+        'Please accept' +
+        contentEncodings.slice(0, -1).join(', ') +
+        contentEncodings.slice(-1).join(', or ')
+
+      response.writeHead(406, statusMessage)
+      return response.end()
+    }
   }
 
   function syncOptions() {
@@ -294,9 +438,19 @@ function ApiCache() {
   }
 
   this.clear = function(target, isAutomatic) {
-    var group = index.groups[target]
-    var redis = globalOptions.redisClient
+    if (redisCache) {
+      return redisCache
+        .clear(target)
+        .then(function(deleteCount) {
+          debug(deleteCount, 'keys cleared')
+          return deleteCount
+        })
+        .catch(function() {
+          debug('error in clear function')
+        })
+    }
 
+    var group = index.groups[target]
     if (group) {
       debug('clearing group "' + target + '"')
 
@@ -304,15 +458,8 @@ function ApiCache() {
         debug('clearing cached entry for "' + key + '"')
         clearTimeout(timers[key])
         delete timers[key]
-        if (!globalOptions.redisClient) {
-          memCache.delete(key)
-        } else {
-          try {
-            redis.del(key)
-          } catch (err) {
-            console.log('[apicache] error in redis.del("' + key + '")')
-          }
-        }
+        memCache.delete(key)
+
         index.all = index.all.filter(doesntMatch(key))
       })
 
@@ -322,15 +469,7 @@ function ApiCache() {
       clearTimeout(timers[target])
       delete timers[target]
       // clear actual cached entry
-      if (!redis) {
-        memCache.delete(target)
-      } else {
-        try {
-          redis.del(target)
-        } catch (err) {
-          console.log('[apicache] error in redis.del("' + target + '")')
-        }
-      }
+      memCache.delete(target)
 
       // remove from global index
       index.all = index.all.filter(doesntMatch(target))
@@ -339,28 +478,17 @@ function ApiCache() {
       Object.keys(index.groups).forEach(function(groupName) {
         index.groups[groupName] = index.groups[groupName].filter(doesntMatch(target))
 
+        var isGroupEmpty = !index.groups[groupName].length
         // delete group if now empty
-        if (!index.groups[groupName].length) {
+        if (isGroupEmpty) {
           delete index.groups[groupName]
         }
       })
     } else {
       debug('clearing entire index')
 
-      if (!redis) {
-        memCache.clear()
-      } else {
-        // clear redis keys one by one from internal index to prevent clearing non-apicache entries
-        index.all.forEach(function(key) {
-          clearTimeout(timers[key])
-          delete timers[key]
-          try {
-            redis.del(key)
-          } catch (err) {
-            console.log('[apicache] error in redis.del("' + key + '")')
-          }
-        })
-      }
+      memCache.clear()
+
       this.resetIndex()
     }
 
@@ -371,7 +499,7 @@ function ApiCache() {
     if (typeof duration === 'number') return duration
 
     if (typeof duration === 'string') {
-      var split = duration.match(/^([\d\.,]+)\s?(\w+)$/)
+      var split = duration.match(/^([\d.,]+)\s?(\w+)$/)
 
       if (split.length === 3) {
         var len = parseFloat(split[1])
@@ -406,6 +534,7 @@ function ApiCache() {
   }
 
   this.getIndex = function(group) {
+    if (redisCache) return redisCache.getIndex(group)
     if (group) {
       return index.groups[group]
     } else {
@@ -500,7 +629,7 @@ function ApiCache() {
           callCount: this.callCount,
           hitCount: this.hitCount,
           missCount: this.callCount - this.hitCount,
-          hitRate: this.callCount == 0 ? null : this.hitCount / this.callCount,
+          hitRate: this.callCount === 0 ? null : this.hitCount / this.callCount,
           hitRateLast100: this.hitRate(this.hitsLast100),
           hitRateLast1000: this.hitRate(this.hitsLast1000),
           hitRateLast10000: this.hitRate(this.hitsLast10000),
@@ -518,7 +647,7 @@ function ApiCache() {
         var misses = 0
         for (var i = 0; i < array.length; i++) {
           var n8 = array[i]
-          for (j = 0; j < 4; j++) {
+          for (var j = 0; j < 4; j++) {
             switch (n8 & 3) {
               case 1:
                 hits++
@@ -531,7 +660,7 @@ function ApiCache() {
           }
         }
         var total = hits + misses
-        if (total == 0) return null
+        if (total === 0) return null
         return hits / total
       }
 
@@ -615,7 +744,8 @@ function ApiCache() {
 
       // Remove querystring from key if jsonp option is enabled
       if (opt.jsonp) {
-        key = url.parse(key).pathname
+        // eslint-disable-next-line node/no-deprecated-api
+        key = url.URL ? new url.URL(key).pathname : url.parse(key).pathname
       }
 
       // add appendKey (either custom function or response path)
@@ -630,58 +760,65 @@ function ApiCache() {
         key += '$$appendKey=' + appendKey
       }
 
-      // attempt cache hit
-      var redis = opt.redisClient
-      var cached = !redis ? memCache.getValue(key) : null
-
-      // send if cache hit from memory-cache
-      if (cached) {
-        var elapsed = new Date() - req.apicacheTimer
-        debug('sending cached (memory-cache) version of', key, logDuration(elapsed))
-
-        perf.hit(key)
-        return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
-      }
-
-      // send if cache hit from redis
-      if (redis && redis.connected) {
+      var _makeResponseCacheable = function() {
         try {
-          redis.hgetall(key, function(err, obj) {
-            if (!err && obj && obj.response) {
-              var elapsed = new Date() - req.apicacheTimer
-              debug('sending cached (redis) version of', key, logDuration(elapsed))
-
-              perf.hit(key)
-              return sendCachedResponse(
-                req,
-                res,
-                JSON.parse(obj.response),
-                middlewareToggle,
-                next,
-                duration
-              )
-            } else {
-              perf.miss(key)
-              return makeResponseCacheable(
-                req,
-                res,
-                next,
-                key,
-                duration,
-                strDuration,
-                middlewareToggle
-              )
-            }
-          })
-        } catch (err) {
-          // bypass redis on error
           perf.miss(key)
-          return makeResponseCacheable(req, res, next, key, duration, strDuration, middlewareToggle)
+          return makeResponseCacheable(
+            req,
+            res,
+            next,
+            key,
+            duration,
+            strDuration,
+            middlewareToggle,
+            opt
+          )
+        } catch (err) {
+          debug(err)
+          return next()
         }
-      } else {
-        perf.miss(key)
-        return makeResponseCacheable(req, res, next, key, duration, strDuration, middlewareToggle)
       }
+
+      // attempt cache hit
+      var cachedPromise = !redisCache
+        ? Promise.resolve(memCache.getValue(key))
+        : redisCache.getValue(key)
+
+      return cachedPromise
+        .then(function(cached) {
+          // send if cache hit from memory-cache
+          if (cached) {
+            var elapsed = new Date() - req.apicacheTimer
+            debug(
+              'sending cached',
+              redisCache ? '(redis)' : '(memory-cache)',
+              'version of',
+              key,
+              logDuration(elapsed)
+            )
+
+            perf.hit(key)
+            try {
+              return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
+            } catch (err) {
+              debug(err)
+              if (res.headersSent) {
+                perf.miss(key)
+                return res.end()
+              }
+
+              return _makeResponseCacheable()
+            }
+          } else {
+            return _makeResponseCacheable()
+          }
+        })
+        .catch(function(err) {
+          debug(err)
+          perf.miss(key)
+          if (res.headersSent) res.end()
+          else next()
+        })
     }
 
     cache.options = options
@@ -691,6 +828,9 @@ function ApiCache() {
 
   this.options = function(options) {
     if (options) {
+      var redisConnectionChanged =
+        (options.redisClient !== undefined && globalOptions.redisClient !== options.redisClient) ||
+        (options.redisPrefix !== undefined && globalOptions.redisPrefix !== options.redisPrefix)
       Object.assign(globalOptions, options)
       syncOptions()
 
@@ -703,6 +843,7 @@ function ApiCache() {
         debug('WARNING: using trackPerformance flag can cause high memory usage!')
       }
 
+      if (redisConnectionChanged) this.initRedis()
       return this
     } else {
       return globalOptions
@@ -714,6 +855,11 @@ function ApiCache() {
       all: [],
       groups: {},
     }
+  }
+
+  this.initRedis = function() {
+    if (!globalOptions.redisClient) redisCache = null
+    else redisCache = new RedisCache(globalOptions, debug)
   }
 
   this.newInstance = function(config) {
@@ -732,6 +878,7 @@ function ApiCache() {
 
   // initialize index
   this.resetIndex()
+  this.initRedis()
 }
 
 module.exports = new ApiCache()

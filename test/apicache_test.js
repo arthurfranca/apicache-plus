@@ -1,19 +1,34 @@
+/* eslint-disable no-unused-expressions */
 var chai = require('chai')
 var expect = chai.expect
 var request = require('supertest')
-var apicache = require('../src/apicache')
 var pkg = require('../package.json')
-var redis = require('fakeredis')
-var a = apicache.clone()
-var b = apicache.clone()
-var c = apicache.clone()
 var movies = require('./api/lib/data.json')
+var redis = require('ioredis-mock')
+// node-redis usage
+redis.createClient = function(options) {
+  if (options.prefix) options.keyPrefix = options.prefix
+  var client = new this(options)
+  // patch append to work with buffers and add missing getrangeBuffer
+  var multi = client.multi()
+  client.multi = function() {
+    return multi
+  }
+  var multiAppend = multi.append.bind(multi)
+  multi.append = function(key, value) {
+    if (!Buffer.isBuffer(value)) return multiAppend(key, value)
+
+    var memo = client.data.get(key) || Buffer.alloc(0)
+    value = Buffer.from(value, 'utf8') // ioredis-mock stores buffers as utf-8
+    client.data.set(key, Buffer.concat([memo, value]))
+  }
+  client.getrangeBuffer = client.getrange
+  return client
+}
 
 var apis = [
   { name: 'express', server: require('./api/express') },
   { name: 'express+gzip', server: require('./api/express-gzip') },
-
-  // THESE TESTS ARE REMOVED AS RESTIFY 4 and 5 ARE CURRENTLY BREAKING IN THE ENVIRONMENT
   { name: 'restify', server: require('./api/restify') },
   { name: 'restify+gzip', server: require('./api/restify-gzip') },
 ]
@@ -244,6 +259,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
@@ -257,6 +273,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
@@ -293,6 +310,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['bar'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: ['400'] },
         events: { expire: undefined },
@@ -308,6 +326,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
@@ -340,6 +359,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: ['400'] },
         events: { expire: undefined },
@@ -353,6 +373,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
@@ -394,6 +415,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
@@ -409,6 +431,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
+        redisPrefix: '',
         headerBlacklist: [],
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
@@ -455,13 +478,61 @@ describe('.middleware {MIDDLEWARE}', function() {
         request(app)
           .get('/api/movies')
           .expect(200, movies)
-          .expect('Cache-Control', 'max-age=10')
+          .expect('Cache-Control', 'max-age=10, must-revalidate')
+          .then(function(res) {
+            setTimeout(function() {
+              request(app)
+                .get('/api/movies')
+                .expect(200, movies)
+                .expect('Cache-Control', 'max-age=9, must-revalidate')
+                .then(function() {
+                  expect(app.requestsProcessed).to.equal(1)
+                  done()
+                })
+                .catch(function(err) {
+                  done(err)
+                })
+            }, 500)
+          })
+      })
+
+      it('returns decremented max-age header when overwritten one is higher than cache duration', function(done) {
+        var app = mockAPI.create('10 seconds', { headers: { 'cache-control': 'max-age=15' } })
+
+        request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .expect('Cache-Control', 'max-age=15')
           .then(function(res) {
             setTimeout(function() {
               request(app)
                 .get('/api/movies')
                 .expect(200, movies)
                 .expect('Cache-Control', 'max-age=9')
+                .then(function() {
+                  expect(app.requestsProcessed).to.equal(1)
+                  done()
+                })
+                .catch(function(err) {
+                  done(err)
+                })
+            }, 500)
+          })
+      })
+
+      it('returns overwritten max-age header when lower than cache duration', function(done) {
+        var app = mockAPI.create('10 seconds', { headers: { 'cache-control': 'max-age=5' } })
+
+        request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .expect('Cache-Control', 'max-age=5')
+          .then(function(res) {
+            setTimeout(function() {
+              request(app)
+                .get('/api/movies')
+                .expect(200, movies)
+                .expect('Cache-Control', 'max-age=5')
                 .then(function() {
                   expect(app.requestsProcessed).to.equal(1)
                   done()
@@ -584,7 +655,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         return request(app)
           .get('/api/writeandend')
           .expect(200, 'abc')
-          .expect('Cache-Control', 'max-age=10')
+          .expect('Cache-Control', 'max-age=10, must-revalidate')
           .then(assertNumRequestsProcessed(app, 1))
           .then(function() {
             return request(app)
@@ -600,7 +671,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         return request(app)
           .get('/api/writebufferandend')
           .expect(200, 'abc')
-          .expect('Cache-Control', 'max-age=10')
+          .expect('Cache-Control', 'max-age=10, must-revalidate')
           .then(assertNumRequestsProcessed(app, 1))
           .then(function() {
             return request(app)
@@ -662,13 +733,13 @@ describe('.middleware {MIDDLEWARE}', function() {
 
         return request(app)
           .get('/api/movies')
-          .expect('Cache-Control', 'max-age=10')
+          .expect('Cache-Control', 'max-age=10, must-revalidate')
           .expect(200, movies)
           .then(function(res) {
             expect(res.headers['apicache-store']).to.be.undefined
             expect(res.headers['apicache-version']).to.be.undefined
             expect(app.requestsProcessed).to.equal(1)
-            expect(res.headers['date']).to.exist
+            expect(res.headers.date).to.exist
           })
           .then(function() {
             return request(app)
@@ -691,11 +762,38 @@ describe('.middleware {MIDDLEWARE}', function() {
             expect(res.headers['apicache-store']).to.be.undefined
             expect(res.headers['apicache-version']).to.be.undefined
             expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.date).to.exist
+          })
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'no-cache')
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      it('allows cache-control header to be overwritten by local options', function() {
+        var globalOptions = { headers: { 'cache-control': 'no-cache' } }
+        var localOptions = { headers: { 'cache-control': 'no-store' } }
+        var app = mockAPI.create('10 seconds', globalOptions, null, localOptions)
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'no-store')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(res.headers['apicache-store']).to.be.undefined
+            expect(res.headers['apicache-version']).to.be.undefined
+            expect(app.requestsProcessed).to.equal(1)
             expect(res.headers['date']).to.exist
           })
           .then(function() {
             return request(app)
               .get('/api/movies')
+              .expect('Cache-Control', 'no-store')
               .expect('apicache-store', 'memory')
               .expect('apicache-version', pkg.version)
               .expect(200, movies)
@@ -710,7 +808,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/movies')
           .expect(200)
           .then(function(res) {
-            var etag = res.headers['etag']
+            var etag = res.headers.etag
             expect(etag).to.exist
             return etag
           })
@@ -727,16 +825,111 @@ describe('.middleware {MIDDLEWARE}', function() {
 
         return request(app)
           .get('/api/movies')
-          .expect(200)
+          .expect(200, movies)
           .then(function(res) {
-            return res.headers['etag']
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers['last-modified']).to.be.undefined
+            return res.headers.etag
           })
           .then(function(etag) {
             return request(app)
               .get('/api/movies')
               .set('if-none-match', etag)
-              .expect(304)
+              .expect(304, '')
               .expect('etag', etag)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it('respects if-modified-since header', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.etag).to.be.undefined
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('if-modified-since', lastModified)
+              .expect(304, '')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it("don't send 304 if set if-unmodified-since header", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.etag).to.be.undefined
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('if-unmodified-since', new Date().toUTCString())
+              .set('if-modified-since', lastModified)
+              .expect(200, 'hi')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it('support end-to-end reload requests', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers.etag).to.be.undefined
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('cache-control', 'no-cache')
+              .set('if-modified-since', lastModified)
+              .expect(200, 'hi')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it('send empty body for HEAD requests', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            return request(app)
+              .head('/api/movies')
+              .expect(200, undefined)
+              .then(function(cachedRes) {
+                expect(res.headers['content-type']).to.exist
+                expect(res.headers['content-type']).to.eql(cachedRes.headers['content-type'])
+                expect(app.requestsProcessed).to.equal(1)
+              })
           })
       })
 
@@ -763,7 +956,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/missing')
           .expect(404)
           .then(function(res) {
-            expect(res.headers['cache-control']).to.equal('no-cache, no-store, must-revalidate')
+            expect(res.headers['cache-control']).to.equal('no-store')
             expect(app.apicache.getIndex().all.length).to.equal(0)
           })
       })
@@ -777,7 +970,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/missing')
           .expect(404)
           .then(function(res) {
-            expect(res.headers['cache-control']).to.equal('no-cache, no-store, must-revalidate')
+            expect(res.headers['cache-control']).to.equal('no-store')
             expect(app.apicache.getIndex().all.length).to.equal(0)
           })
       })
@@ -814,7 +1007,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/missing')
           .expect(404)
           .then(function(res) {
-            expect(res.headers['cache-control']).to.equal('no-cache, no-store, must-revalidate')
+            expect(res.headers['cache-control']).to.equal('no-store')
             expect(app.apicache.getIndex().all.length).to.equal(0)
           })
       })
@@ -824,7 +1017,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
         request(app)
           .get('/api/movies')
-          .end(function(err, res) {
+          .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.getIndex().all).to.include('/api/movies')
           })
@@ -832,11 +1025,11 @@ describe('.middleware {MIDDLEWARE}', function() {
         setTimeout(function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           done()
-        }, 25)
+        }, 30)
       })
 
       it('executes expiration callback from globalOptions.events.expire upon entry expiration', function(done) {
-        var callbackResponse = undefined
+        var callbackResponse
         var cb = function(a, b) {
           callbackResponse = b
         }
@@ -844,7 +1037,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
         request(app)
           .get('/api/movies')
-          .end(function(err, res) {
+          .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.getIndex().all).to.include('/api/movies')
           })
@@ -857,33 +1050,35 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('clearing cache cancels expiration callback', function(done) {
-        var app = mockAPI.create(20)
+        var app = mockAPI.create(30)
 
         request(app)
           .get('/api/movies')
-          .end(function(err, res) {
+          .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
+            expect(app.requestsProcessed).to.equal(1)
           })
 
         setTimeout(function() {
           request(app)
             .get('/api/movies')
-            .end(function(err, res) {
+            .end(function(_err, res) {
               expect(app.apicache.getIndex().all.length).to.equal(1)
               expect(app.apicache.getIndex().all).to.include('/api/movies')
+              expect(app.requestsProcessed).to.equal(2)
             })
-        }, 10)
+        }, 15)
 
         setTimeout(function() {
           expect(app.apicache.getIndex().all.length).to.equal(1)
           expect(app.apicache.getIndex().all).to.include('/api/movies')
           done()
-        }, 25)
+        }, 35)
       })
 
       it('allows defaultDuration to be a parseable string (e.g. "1 week")', function(done) {
-        var callbackResponse = undefined
+        var callbackResponse
         var cb = function(a, b) {
           callbackResponse = b
         }
@@ -891,7 +1086,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
         request(app)
           .get('/api/movies')
-          .end(function(err, res) {
+          .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.getIndex().all).to.include('/api/movies')
           })
@@ -906,6 +1101,172 @@ describe('.middleware {MIDDLEWARE}', function() {
   })
 })
 
+var compressionApis = [apis[1], apis[3]]
+compressionApis.forEach(function(api) {
+  describe(api.name + ' compression tests', function() {
+    var db = redis.createClient({ prefix: 'a-prefix:' })
+    var mockAPI = api.server
+    var configs = [
+      {
+        clientName: 'memory',
+        config: {},
+      },
+      {
+        clientName: 'redis',
+        config: { redisClient: db, redisPrefix: 'a-prefix:' },
+      },
+    ]
+
+    configs.forEach(function(meta) {
+      describe('with ' + meta.clientName + ' cache', function() {
+        if (meta.clientName === 'redis') {
+          // eslint-disable-next-line no-undef
+          afterEach(function(done) {
+            db.flushdb(done)
+          })
+        }
+
+        it('can send compressed cache', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', 'deflate, gzip')
+            .expect('Content-Encoding', 'gzip')
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', '*')
+                .expect('Content-Encoding', 'gzip')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('respect cache-control no-transform value', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/notransform')
+            .set('Accept-Encoding', 'deflate, gzip')
+            .expect(200, 'hi')
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/notransform')
+                .set('Accept-Encoding', '*')
+                .expect(200, 'hi')
+            })
+            .then(function(res) {
+              expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('can use cache with compression mismatch', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', 'deflate, gzip')
+            .expect('Content-Encoding', 'gzip')
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', 'br')
+                .expect('Content-Encoding', 'identity')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('can use compressed cache for uncompressed request', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+          var encoding = api.name === 'restify+gzip' ? 'gzip' : 'deflate'
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', encoding)
+            .expect('Content-Encoding', encoding)
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', '')
+                .expect('Content-Encoding', 'identity')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('can use compressed cache for unknown encoding request', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', 'gzip')
+            .expect('Content-Encoding', 'gzip')
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', 'unknown')
+                .expect('Content-Encoding', 'identity')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it("'won't compress with unknown encoding request", function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', 'unknown')
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', 'gzip')
+                .expect(200, movies)
+            })
+            .then(function(res) {
+              expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+      })
+    })
+  })
+})
+
 describe('Redis support', function() {
   function hgetallIsNull(db, key) {
     return new Promise(function(resolve, reject) {
@@ -913,7 +1274,8 @@ describe('Redis support', function() {
         if (err) {
           reject(err)
         } else {
-          expect(reply).to.equal(null)
+          // null when node-redis. {} when ioredis
+          expect(reply || {}).to.eql({})
           db.flushdb()
           resolve()
         }
@@ -923,11 +1285,12 @@ describe('Redis support', function() {
 
   apis.forEach(function(api) {
     describe(api.name + ' tests', function() {
+      this.timeout(3000)
       var mockAPI = api.server
 
       it('properly caches a request', function() {
-        var db = redis.createClient()
-        var app = mockAPI.create('10 seconds', { redisClient: db })
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('10 seconds', { redisClient: db, redisPrefix: 'a-prefix:' })
 
         return request(app)
           .get('/api/movies')
@@ -951,53 +1314,289 @@ describe('Redis support', function() {
       })
 
       it('can clear indexed cache groups', function() {
-        var db = redis.createClient()
-        var app = mockAPI.create('10 seconds', { redisClient: db })
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('10 seconds', { redisClient: db, redisPrefix: 'a-prefix:' })
 
         return request(app)
           .get('/api/testcachegroup')
           .then(function(res) {
             expect(app.requestsProcessed).to.equal(1)
-            expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.getIndex().groups.cachegroup.length).to.equal(1)
-            expect(Object.keys(app.apicache.clear('cachegroup').groups).length).to.equal(0)
-            expect(app.apicache.getIndex().all.length).to.equal(0)
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(app.apicache.getIndex())
+              }, 10)
+            })
+          })
+          .then(function(index) {
+            expect(index.all.length).to.equal(1)
+            expect(index.groups.cachegroup.length).to.equal(1)
+            return app.apicache.clear('cachegroup').then(function() {
+              return app.apicache.getIndex()
+            })
+          })
+          .then(function(index) {
+            expect(Object.keys(index.groups).length).to.equal(0)
+            expect(index.all.length).to.equal(0)
             return hgetallIsNull(db, '/api/testcachegroup')
           })
       })
 
       it('can clear indexed entries by url/key (non-group)', function() {
-        var db = redis.createClient()
-        var app = mockAPI.create('10 seconds', { redisClient: db })
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('10 seconds', { redisClient: db, redisPrefix: 'a-prefix:' })
 
         return request(app)
-          .get('/api/movies')
+          .get('/api/testcachegroup')
           .then(function(res) {
             expect(app.requestsProcessed).to.equal(1)
-            expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(app.apicache.getIndex())
+              }, 10)
+            })
+          })
+          .then(function(index) {
+            expect(index.all.length).to.equal(1)
+            expect(Object.keys(index.groups).length).to.equal(1)
+            return app.apicache.clear('/api/testcachegroup').then(function() {
+              return app.apicache.getIndex()
+            })
+          })
+          .then(function(index) {
+            expect(index.all.length).to.equal(0)
+            expect(Object.keys(index.groups).length).to.equal(0)
             return hgetallIsNull(db, '/api/movies')
           })
       })
 
       it('can clear all entries from index', function() {
-        var db = redis.createClient()
-        var app = mockAPI.create('10 seconds', { redisClient: db })
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('10 seconds', { redisClient: db, redisPrefix: 'a-prefix:' })
 
-        expect(app.apicache.getIndex().all.length).to.equal(0)
-        expect(app.apicache.clear().all.length).to.equal(0)
-
-        return request(app)
-          .get('/api/movies')
+        return app.apicache
+          .getIndex()
+          .then(function(index) {
+            expect(index.all.length).to.equal(0)
+            return app.apicache.clear().then(function() {
+              return new Promise(function(resolve) {
+                setImmediate(function() {
+                  resolve(app.apicache.getIndex())
+                })
+              }).then(function(index) {
+                expect(index.all.length).to.equal(0)
+              })
+            })
+          })
+          .then(function() {
+            return request(app).get('/api/testcachegroup')
+          })
           .then(function(res) {
             expect(app.requestsProcessed).to.equal(1)
-            expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.clear().all.length).to.equal(0)
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(app.apicache.getIndex())
+              }, 10)
+            })
+          })
+          .then(function(index) {
+            expect(index.all.length).to.equal(1)
+            expect(Object.keys(index.groups).length).to.equal(1)
+            return app.apicache.clear().then(function() {
+              return app.apicache.getIndex()
+            })
+          })
+          .then(function(index) {
+            expect(index.all.length).to.equal(0)
+            expect(Object.keys(index.groups).length).to.equal(0)
             return hgetallIsNull(db, '/api/movies')
           })
       })
 
-      it('sends a response even if redis failure', function() {
+      it('can share cache between instances', function() {
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('10 seconds', { redisClient: db, redisPrefix: 'a-prefix:' })
+        var otherApp
+
+        return request(app)
+          .get('/api/testcachegroup')
+          .then(function() {
+            otherApp = mockAPI.create('10 seconds', { redisClient: db, redisPrefix: 'a-prefix:' })
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(Promise.all([app.apicache.getIndex(), otherApp.apicache.getIndex()]))
+              }, 10)
+            })
+          })
+          .then(function(indexes) {
+            indexes.forEach(function(index) {
+              expect(index.all.length).to.equal(1)
+              expect(index.groups.cachegroup.length).to.equal(1)
+            })
+            return otherApp.apicache.clear('cachegroup')
+          })
+          .then(function() {
+            return Promise.all([app.apicache.getIndex(), otherApp.apicache.getIndex()])
+          })
+          .then(function(indexes) {
+            indexes.forEach(function(index) {
+              expect(index.all.length).to.equal(0)
+              expect((index.groups.cachegroup || []).length).to.equal(0)
+            })
+            return hgetallIsNull(db, '/api/testcachegroup')
+          })
+      })
+
+      it('can download data even if key gets deleted in the middle of it', function() {
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
+
+        var then = Date.now()
+        return request(app)
+          .get('/api/bigresponse')
+          .expect(200)
+          .then(function(res) {
+            var resTime = Date.now() - then
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.text.slice(0, 5)).to.equal('aaaaa')
+            then = Date.now()
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                var promiseAll = Promise.all([
+                  request(app)
+                    .get('/api/bigresponse')
+                    .then(function(otherRes) {
+                      return [Date.now() - then, otherRes]
+                    }),
+                  new Promise(function(resolve) {
+                    return setTimeout(function() {
+                      app.apicache.clear('/api/bigresponse').then(function(deleteCount) {
+                        resolve([Date.now() - then, deleteCount])
+                      })
+                    }, resTime / 10)
+                  }),
+                ])
+                resolve(promiseAll)
+              }, 10)
+            })
+              .then(function(promiseAllReturn) {
+                var elapsedTime1 = promiseAllReturn[0][0]
+                var elapsedTime2 = promiseAllReturn[1][0]
+                expect(elapsedTime2).to.be.below(elapsedTime1)
+                return [promiseAllReturn[0][1], promiseAllReturn[1][1]]
+              })
+              .then(function(otherResAndDeleteCount) {
+                var cachedRes = otherResAndDeleteCount[0]
+                var deleteCount = otherResAndDeleteCount[1]
+                expect(cachedRes.text).to.equal(res.text)
+                expect(deleteCount).to.equal(2)
+                return app.apicache.getIndex()
+              })
+          })
+          .then(function(index) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(index.all.length).to.equal(0)
+            expect(Object.keys(index.groups).length).to.equal(0)
+          })
+          .then(function() {
+            return new Promise(function(resolve) {
+              db.flushdb(resolve)
+            })
+          })
+      })
+
+      it('can download data even if key group gets deleted in the middle of it', function() {
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
+
+        var then = Date.now()
+        return request(app)
+          .get('/api/bigresponse')
+          .expect(200)
+          .then(function(res) {
+            var resTime = Date.now() - then
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.text.slice(0, 5)).to.equal('aaaaa')
+            then = Date.now()
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                var promiseAll = Promise.all([
+                  request(app)
+                    .get('/api/bigresponse')
+                    .then(function(otherRes) {
+                      return [Date.now() - then, otherRes]
+                    }),
+                  new Promise(function(resolve) {
+                    return setTimeout(function() {
+                      app.apicache.clear('bigresponsegroup').then(function(deleteCount) {
+                        resolve([Date.now() - then, deleteCount])
+                      })
+                    }, resTime / 10)
+                  }),
+                ])
+                resolve(promiseAll)
+              }, 10)
+            })
+              .then(function(promiseAllReturn) {
+                var elapsedTime1 = promiseAllReturn[0][0]
+                var elapsedTime2 = promiseAllReturn[1][0]
+                expect(elapsedTime2).to.be.below(elapsedTime1)
+                return [promiseAllReturn[0][1], promiseAllReturn[1][1]]
+              })
+              .then(function(otherResAndDeleteCount) {
+                var cachedRes = otherResAndDeleteCount[0]
+                var deleteCount = otherResAndDeleteCount[1]
+                expect(cachedRes.text).to.equal(res.text)
+                expect(deleteCount).to.equal(2)
+                return app.apicache.getIndex()
+              })
+          })
+          .then(function(index) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(index.all.length).to.equal(0)
+            expect(Object.keys(index.groups).length).to.equal(0)
+          })
+          .then(function() {
+            return new Promise(function(resolve) {
+              db.flushdb(resolve)
+            })
+          })
+      })
+
+      it("won't append response to same key twice", function() {
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
+
+        return Promise.all([
+          request(app).get('/api/slowresponse'),
+          request(app).get('/api/slowresponse'),
+        ])
+          .then(function(res) {
+            expect(res[0].text).to.equal(res[1].text)
+            expect(res[0].text).to.equal('hello world')
+            expect(app.requestsProcessed).to.equal(2)
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(app.apicache.getIndex())
+              }, 10)
+            })
+          })
+          .then(function(index) {
+            expect(index.all.length).to.equal(1)
+            expect(index.all[0]).to.equal('/api/slowresponse')
+            return request(app).get('/api/slowresponse')
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(2)
+            expect(res.text).to.equal('hello world')
+          })
+          .then(function() {
+            return new Promise(function(resolve) {
+              db.flushdb(resolve)
+            })
+          })
+      })
+
+      it('sends a response even upon redis failure', function() {
         var app = mockAPI.create('10 seconds', { redisClient: {} })
 
         return request(app)

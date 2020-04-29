@@ -15,7 +15,6 @@ module.exports = function(app) {
     res.json(movies)
   })
 
-
   app.get('/api/writeandend', function(req, res) {
     app.requestsProcessed++
 
@@ -30,12 +29,13 @@ module.exports = function(app) {
   app.get('/api/writebufferandend', function(req, res) {
     app.requestsProcessed++
 
-
     res.setHeader('Content-Type', 'text/plain')
     if (process.versions.node.indexOf('4') === 0) {
+      /* eslint-disable node/no-deprecated-api */
       res.write(new Buffer([0x61]))
       res.write(new Buffer([0x62]))
       res.write(new Buffer([0x63]))
+      /* eslint-enable node/no-deprecated-api */
     } else {
       res.write(Buffer.from('a'))
       res.write(Buffer.from('b'))
@@ -84,7 +84,58 @@ module.exports = function(app) {
   app.get('/api/movies/:index', function(req, res) {
     app.requestsProcessed++
 
-    res.json(movies[index])
+    res.json(movies[req.params.index])
+  })
+
+  app.get('/api/bigresponse', function(req, res) {
+    app.requestsProcessed++
+    req.apicacheGroup = 'bigresponsegroup'
+
+    var chunkCount = 225
+    var chunkLength = 16384
+    var chunk = new Array(16384).fill('a').join('')
+    var rstream = require('stream').Readable({
+      highWaterMark: chunkLength,
+      read() {
+        if (chunkCount-- === 0) this.push(null)
+        else this.push(chunk)
+      },
+    })
+
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    rstream.pipe(res)
+  })
+
+  app.get('/api/slowresponse', function(req, res) {
+    app.requestsProcessed++
+
+    res.writeHead(200, { 'Content-Type': 'text/plain' })
+    res.write('hello ')
+    setTimeout(function() {
+      res.write('world')
+      res.end()
+    }, 100)
+  })
+
+  app.get('/api/ifmodifiedsince', function(req, res) {
+    app.requestsProcessed++
+
+    var _setHeader = res.setHeader
+    res.setHeader = function(name) {
+      if (name === 'etag') return res
+      return _setHeader.apply(res, arguments)
+    }
+    res.writeHead(200, { 'Last-Modified': new Date().toUTCString() })
+    res.write('hi')
+    res.end()
+  })
+
+  app.get('/api/notransform', function(req, res) {
+    app.requestsProcessed++
+
+    res.writeHead(200, { 'Cache-Control': 'no-transform' })
+    res.write('hi')
+    res.end()
   })
 
   return app
