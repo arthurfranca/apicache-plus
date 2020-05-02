@@ -5,6 +5,7 @@ var request = require('supertest')
 var pkg = require('../package.json')
 var movies = require('./api/lib/data.json')
 var redis = require('ioredis-mock')
+var apicache = require('../src/apicache')
 // node-redis usage
 redis.createClient = function(options) {
   if (options.prefix) options.keyPrefix = options.prefix
@@ -1097,6 +1098,98 @@ describe('.middleware {MIDDLEWARE}', function() {
           done()
         }, 30)
       })
+
+      describe('can attach many apicache middlewares to same route', function() {
+        beforeEach(function() {
+          var cache = apicache.newInstance({ enabled: true }).middleware
+          this.app = mockAPI.create(null, { enabled: false })
+          this.skippingMiddleware = cache('2 seconds', function(req) {
+            return req.path !== '/sameroute'
+          })
+          this.regularMiddleware = cache('2 seconds', function(req) {
+            return req.path === '/sameroute'
+          })
+          this.otherRegularMiddleware = cache('2 seconds', null)
+          this.responseBody = { i: 'am' }
+          this.respond = function(_req, res) {
+            this.app.requestsProcessed++
+            res.json(this.responseBody)
+          }.bind(this)
+        })
+
+        it('starting with a bypass toggle', function() {
+          var that = this
+          this.app.get(
+            '/sameroute',
+            this.otherRegularMiddleware,
+            this.regularMiddleware,
+            // this is starting one cause of patched res functions gets called at reverse order
+            this.skippingMiddleware,
+            this.respond
+          )
+
+          request(this.app)
+            .get('/sameroute')
+            .expect(200, this.responseBody)
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return request(that.app)
+                .get('/sameroute')
+                .expect(200, that.responseBody)
+            })
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('not starting with a bypass toggle', function() {
+          var that = this
+          this.app.get(
+            '/sameroute',
+            this.otherRegularMiddleware,
+            this.skippingMiddleware,
+            this.regularMiddleware,
+            this.respond
+          )
+
+          request(this.app)
+            .get('/sameroute')
+            .expect(200, this.responseBody)
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return request(that.app)
+                .get('/sameroute')
+                .expect(200, that.responseBody)
+            })
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('ending with a bypass toggle', function() {
+          var that = this
+          this.app.get(
+            '/sameroute',
+            this.skippingMiddleware,
+            this.regularMiddleware,
+            this.otherRegularMiddleware,
+            this.respond
+          )
+
+          request(this.app)
+            .get('/sameroute')
+            .expect(200, this.responseBody)
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return request(that.app)
+                .get('/sameroute')
+                .expect(200, that.responseBody)
+            })
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+            })
+        })
+      })
     })
   })
 })
@@ -1241,7 +1334,7 @@ compressionApis.forEach(function(api) {
             })
         })
 
-        it("'won't compress with unknown encoding request", function() {
+        it("won't compress with unknown encoding request", function() {
           var app = mockAPI.create('10 seconds', meta.config)
 
           return request(app)

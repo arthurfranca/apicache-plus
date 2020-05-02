@@ -178,29 +178,28 @@ function ApiCache() {
       return (ret = parseInt(process.versions.node.split('.')[0], 10) <= 7)
     }
   })()
+
   function makeResponseCacheable(req, res, next, key, duration, strDuration, toggle, options) {
     var shouldCacheRes = (function(shouldIt) {
       return function(req, res, toggle, options) {
         if (shouldIt !== undefined) return shouldIt
+
         return (shouldIt = shouldCacheResponse(req, res, toggle, options))
       }
     })()
 
-    // monkeypatch res.end to create cache object
-    res._apicache = {
+    // monkeypatch res to create cache object
+    const apicacheResPatches = {
       write: res.write,
       writeHead: res.writeHead,
       end: res.end,
-      cacheable: true,
-      content: undefined,
     }
 
-    // append header overwrites if applicable
-    Object.keys(options.headers).forEach(function(name) {
-      res.setHeader(name, options.headers[name])
-    })
-
     res.writeHead = function(statusCode) {
+      if (res._shouldCacheResWriteHeadVersionAlreadyRun) {
+        return apicacheResPatches.writeHead.apply(this, arguments)
+      }
+
       res.statusCode = statusCode
 
       // add cache control headers
@@ -215,17 +214,29 @@ function ApiCache() {
         }
       }
 
-      return res._apicache.writeHead.apply(this, arguments)
+      if (shouldCacheRes(req, res, toggle, options)) {
+        // append header overwrites if applicable
+        Object.keys(options.headers).forEach(function(name) {
+          res.setHeader(name, options.headers[name])
+        })
+
+        res._shouldCacheResWriteHeadVersionAlreadyRun = true
+      }
+
+      return apicacheResPatches.writeHead.apply(this, arguments)
     }
 
     var getWstream = (function(wstream) {
       return function() {
         if (wstream) return wstream
 
-        if (!shouldCacheRes(req, res, toggle, options)) {
+        if (
+          res._shouldCacheResWriteOrEndVersionAlreadyRun ||
+          !shouldCacheRes(req, res, toggle, options)
+        ) {
           var emptyFn = function() {}
           return (wstream = Promise.resolve({ write: emptyFn, end: emptyFn }))
-        }
+        } else res._shouldCacheResWriteOrEndVersionAlreadyRun = true
 
         var getCacheObject = function() {
           var headers = getSafeHeaders(res)
@@ -267,7 +278,7 @@ function ApiCache() {
     ;['write', 'end'].forEach(function(method) {
       var ret
       res[method] = function(chunk, encoding) {
-        ret = res._apicache[method].apply(this, arguments)
+        ret = apicacheResPatches[method].apply(this, arguments)
         getWstream().then(function(wstream) {
           wstream[method](chunk, encoding)
         })
@@ -296,6 +307,15 @@ function ApiCache() {
     if (toggle && !toggle(request, response)) {
       return next()
     }
+
+    var elapsed = new Date() - request.apicacheTimer
+    debug(
+      'sending cached',
+      redisCache ? '(redis)' : '(memory-cache)',
+      'version of',
+      cacheObject.key,
+      logDuration(elapsed)
+    )
 
     var headers = getSafeHeaders(response)
     var cacheObjectHeaders = cacheObject.headers || {}
@@ -788,15 +808,6 @@ function ApiCache() {
         .then(function(cached) {
           // send if cache hit from memory-cache
           if (cached) {
-            var elapsed = new Date() - req.apicacheTimer
-            debug(
-              'sending cached',
-              redisCache ? '(redis)' : '(memory-cache)',
-              'version of',
-              key,
-              logDuration(elapsed)
-            )
-
             perf.hit(key)
             try {
               return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
