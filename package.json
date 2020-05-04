@@ -6,7 +6,7 @@
     "test": "nyc mocha $(find test -name '*.test.js') --recursive",
     "test:watch": "npm run test -- --watch",
     "coverage": "nyc report --reporter=text-lcov | coveralls",
-    "prepublish": "npm run test"
+    "prepublishOnly": "npm run test"
   },
   "engines": {
     "node": ">=6.2.0",
