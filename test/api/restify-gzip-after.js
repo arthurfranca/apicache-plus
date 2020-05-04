@@ -1,10 +1,9 @@
-var express = require('express')
-var compression = require('compression')
+var restify = require('restify')
 var addRoutes = require('./lib/routes')
 
 function MockAPI(expiration, options, toggle, localOptions) {
   var apicache = require('../../src/apicache').newInstance(options)
-  var app = express()
+  var app = restify.createServer()
 
   // EMBED UPSTREAM RESPONSE PARAM
   app.use(function(req, res, next) {
@@ -12,13 +11,27 @@ function MockAPI(expiration, options, toggle, localOptions) {
     next()
   })
 
-  // ENABLE COMPRESSION
-  app.use(compression({ threshold: 1 }))
-
   // ENABLE APICACHE
   app.use(apicache.middleware(expiration, toggle, localOptions))
   app.apicache = apicache
 
+  // ENABLE COMPRESSION
+  var whichGzip = (restify.gzipResponse && restify.gzipResponse()) || restify.plugins.gzipResponse()
+  app.use(whichGzip)
+
+  app.use(function(req, res, next) {
+    res.charSet('utf-8')
+    next()
+  })
+
+  app.use(require('restify-etag-cache')())
+
+  // mimic express behavior of auto responding to .head requests
+  var _get = app.get
+  app.get = function() {
+    app.head.apply(this, arguments)
+    _get.apply(this, arguments)
+  }
   // ADD API ROUTES
   app = addRoutes(app)
 

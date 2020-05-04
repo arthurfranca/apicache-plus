@@ -11,16 +11,13 @@ function MockAPI(expiration, options, toggle, localOptions) {
     next()
   })
 
+  // ENABLE COMPRESSION
+  var whichGzip = (restify.gzipResponse && restify.gzipResponse()) || restify.plugins.gzipResponse()
+  app.use(whichGzip)
+
   // ENABLE APICACHE
   app.use(apicache.middleware(expiration, toggle, localOptions))
   app.apicache = apicache
-
-  // ENABLE COMPRESSION (when apicache middleware would've been attached above compression)
-  if (Object.assign({}, options || {}, localOptions || {}).enabled !== false) {
-    var whichGzip =
-      (restify.gzipResponse && restify.gzipResponse()) || restify.plugins.gzipResponse()
-    app.use(whichGzip)
-  }
 
   app.use(function(req, res, next) {
     res.charSet('utf-8')

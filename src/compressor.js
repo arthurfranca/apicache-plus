@@ -4,21 +4,26 @@ var compressible = require('compressible')
 var zlib = require('zlib')
 var stream = require('stream')
 var THRESHOLD = 1024
+var NO_CONTENT_AND_NOT_MODIFIED_STATUS_CODES = [204, 304]
 var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
 var MIN_CHUNK_SIZE = 64
 var DEFAULT_HIGH_WATER_MARK = 16384
 
-function Compressor(options) {
+function Compressor(options, debug) {
   Object.assign(this, options)
+  this.debug = debug || function() {}
 }
 
-// options { chunkSize, requestMehod, responseMethod, responseHeaders }
-Compressor.run = function(options) {
-  return new Compressor(options).run()
+// options { chunkSize, responseStatusCode, requestMehod, responseMethod, responseHeaders }
+Compressor.run = function(options, debug) {
+  return new Compressor(options, debug).run()
 }
 
 Compressor.prototype.clientDoesntWantContent = function() {
-  return this.requestMehod === 'HEAD'
+  return (
+    this.requestMehod === 'HEAD' ||
+    NO_CONTENT_AND_NOT_MODIFIED_STATUS_CODES.indexOf(this.responseStatusCode) !== -1
+  )
 }
 
 Compressor.prototype.isAlreadyCompressed = function() {
@@ -99,7 +104,7 @@ Compressor.prototype.run = function() {
       tstream = zlib.createGzip({
         chunkSize,
         params: {
-          level: zlib.constants.Z_BEST_COMPRESSION,
+          level: (zlib.constants && zlib.constants.Z_BEST_COMPRESSION) || 9,
         },
       })
     }
@@ -112,7 +117,7 @@ Compressor.prototype.run = function() {
       this.destroy()
     })
   } catch (err) {
-    console.log(err)
+    this.debug(err)
     return new stream.PassThrough()
   }
 }

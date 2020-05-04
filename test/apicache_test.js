@@ -27,18 +27,36 @@ redis.createClient = function(options) {
   return client
 }
 
-var apis = [
-  { name: 'express', server: require('./api/express') },
+// unexpected order
+var revertedCompressionApis = [
+  { name: 'express+gzip (after)', server: require('./api/express-gzip-after') },
+  { name: 'restify+gzip (after)', server: require('./api/restify-gzip-after') },
+]
+var compressionApis = [
   { name: 'express+gzip', server: require('./api/express-gzip') },
-  { name: 'restify', server: require('./api/restify') },
   { name: 'restify+gzip', server: require('./api/restify-gzip') },
 ]
+var regularApis = [
+  { name: 'express', server: require('./api/express') },
+  { name: 'restify', server: require('./api/restify') },
+]
+var apis = regularApis.concat(compressionApis)
 
 function assertNumRequestsProcessed(app, n) {
   return function() {
     expect(app.requestsProcessed).to.equal(n)
   }
 }
+
+function clearAllTimeouts() {
+  var id = setTimeout(function() {
+    while (id--) clearTimeout(id)
+  }, 0)
+}
+
+after(function() {
+  clearAllTimeouts()
+})
 
 describe('.options(opt?) {GETTER/SETTER}', function() {
   var apicache = require('../src/apicache')
@@ -651,7 +669,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('returns cached response from write+end', function() {
-        var app = mockAPI.create('10 seconds')
+        var app = mockAPI.create('10 seconds', {})
 
         return request(app)
           .get('/api/writeandend')
@@ -659,10 +677,16 @@ describe('.middleware {MIDDLEWARE}', function() {
           .expect('Cache-Control', 'max-age=10, must-revalidate')
           .then(assertNumRequestsProcessed(app, 1))
           .then(function() {
-            return request(app)
-              .get('/api/writeandend')
-              .expect(200, 'abc')
-              .then(assertNumRequestsProcessed(app, 1))
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(
+                  request(app)
+                    .get('/api/writeandend')
+                    .expect(200, 'abc')
+                    .then(assertNumRequestsProcessed(app, 1))
+                )
+              }, 10)
+            })
           })
       })
 
@@ -675,10 +699,16 @@ describe('.middleware {MIDDLEWARE}', function() {
           .expect('Cache-Control', 'max-age=10, must-revalidate')
           .then(assertNumRequestsProcessed(app, 1))
           .then(function() {
-            return request(app)
-              .get('/api/writebufferandend')
-              .expect(200, 'abc')
-              .then(assertNumRequestsProcessed(app, 1))
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(
+                  request(app)
+                    .get('/api/writebufferandend')
+                    .expect(200, 'abc')
+                    .then(assertNumRequestsProcessed(app, 1))
+                )
+              }, 10)
+            })
           })
       })
 
@@ -1047,7 +1077,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           expect(callbackResponse).to.equal('/api/movies')
           done()
-        }, 35)
+        }, 40)
       })
 
       it('clearing cache cancels expiration callback', function(done) {
@@ -1075,7 +1105,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(app.apicache.getIndex().all.length).to.equal(1)
           expect(app.apicache.getIndex().all).to.include('/api/movies')
           done()
-        }, 35)
+        }, 40)
       })
 
       it('allows defaultDuration to be a parseable string (e.g. "1 week")', function(done) {
@@ -1096,7 +1126,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           expect(callbackResponse).to.equal('/api/movies')
           done()
-        }, 30)
+        }, 25)
       })
 
       describe('can attach many apicache middlewares to same route', function() {
@@ -1128,14 +1158,20 @@ describe('.middleware {MIDDLEWARE}', function() {
             this.respond
           )
 
-          request(this.app)
+          return request(this.app)
             .get('/sameroute')
             .expect(200, this.responseBody)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
-              return request(that.app)
-                .get('/sameroute')
-                .expect(200, that.responseBody)
+              return new Promise(function(resolve) {
+                setTimeout(function() {
+                  resolve(
+                    request(that.app)
+                      .get('/sameroute')
+                      .expect(200, that.responseBody)
+                  )
+                }, 10)
+              })
             })
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -1152,7 +1188,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             this.respond
           )
 
-          request(this.app)
+          return request(this.app)
             .get('/sameroute')
             .expect(200, this.responseBody)
             .then(function() {
@@ -1176,7 +1212,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             this.respond
           )
 
-          request(this.app)
+          return request(this.app)
             .get('/sameroute')
             .expect(200, this.responseBody)
             .then(function() {
@@ -1185,8 +1221,8 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .get('/sameroute')
                 .expect(200, that.responseBody)
             })
-            .then(function() {
-              expect(that.app.requestsProcessed).to.equal(1)
+            .then(function(res) {
+              return expect(that.app.requestsProcessed).to.equal(1)
             })
         })
       })
@@ -1194,8 +1230,203 @@ describe('.middleware {MIDDLEWARE}', function() {
   })
 })
 
-var compressionApis = [apis[1], apis[3]]
-compressionApis.forEach(function(api) {
+var Compressor = require('../src/compressor')
+apis.concat(revertedCompressionApis).forEach(function(api) {
+  describe(api.name + ' Compressor tests', function() {
+    var db = redis.createClient({ prefix: 'a-prefix:' })
+    var mockAPI = api.server
+    var configs = [
+      {
+        clientName: 'memory',
+        config: {},
+      },
+      {
+        clientName: 'redis',
+        config: { redisClient: db, redisPrefix: 'a-prefix:' },
+      },
+    ]
+
+    configs.forEach(function(meta) {
+      describe('with ' + meta.clientName + ' cache', function() {
+        if (meta.clientName === 'redis') {
+          after(function(done) {
+            db.flushdb(done)
+          })
+        }
+
+        before(function() {
+          var that = this
+          this.old = Compressor.run
+          this.wasCompressorCalled = false
+          Compressor.run = function() {
+            that.wasCompressorCalled = true
+            return {
+              on: function() {
+                var NullObject = require('stream').PassThrough
+                return new NullObject()
+              },
+            }
+          }
+        })
+
+        after(function() {
+          Compressor.run = this.old
+        })
+
+        it('use compressor', function() {
+          var that = this
+          var app = mockAPI.create('10 seconds', meta.config)
+          return request(app)
+            .get('/api/movies')
+            .expect(200, movies)
+            .then(function() {
+              return new Promise(function(resolve) {
+                setImmediate(function() {
+                  var expectation = api.name.indexOf('restify+gzip') === -1
+                  resolve(expect(that.wasCompressorCalled).to.equal(expectation))
+                })
+              })
+            })
+        })
+      })
+    })
+  })
+})
+
+// node >= v11.7.0
+var hasBrotliSupport = (function(ret) {
+  return function() {
+    if (ret !== undefined) return ret
+
+    var split = process.versions.node.split('.').map(function(number) {
+      return parseInt(number, 10)
+    })
+    return (ret = split[0] > 11 || (split[0] === 11 && split[1] >= 7))
+  }
+})()
+apis.forEach(function(api) {
+  describe(api.name + ' compression tests', function() {
+    before(function() {
+      this.old = Compressor.prototype.isContentLengthBellowThreshold
+      Compressor.prototype.isContentLengthBellowThreshold = function() {
+        return false
+      }
+    })
+
+    after(function() {
+      Compressor.prototype.isContentLengthBellowThreshold = this.old
+    })
+
+    var db = redis.createClient({ prefix: 'a-prefix:' })
+    var mockAPI = api.server
+    var configs = [
+      {
+        clientName: 'memory',
+        config: {},
+      },
+      {
+        clientName: 'redis',
+        config: { redisClient: db, redisPrefix: 'a-prefix:' },
+      },
+    ]
+
+    configs.forEach(function(meta) {
+      describe('with ' + meta.clientName + ' cache', function() {
+        if (meta.clientName === 'redis') {
+          // eslint-disable-next-line no-undef
+          afterEach(function(done) {
+            db.flushdb(done)
+          })
+        }
+
+        it('will cache compressed at maximum quality', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+          var encoding = {
+            express: 'identity',
+            'express+gzip': 'deflate',
+            restify: 'identity',
+            'restify+gzip': 'gzip',
+          }[api.name]
+
+          return request(app)
+            .get('/api/movies')
+            .set('Accept-Encoding', encoding)
+            .expect(200, movies)
+            .then(function(res) {
+              expect(res.headers['content-encoding'] || 'identity').to.equal(encoding)
+              expect(app.requestsProcessed).to.equal(1)
+              return new Promise(function(resolve) {
+                setTimeout(resolve, 10)
+              })
+            })
+            .then(function() {
+              var ret = request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', '*')
+                // apicache compression won't necessarily be the same used by compression middleware
+                // as apicache will prefer the best compression (slower)
+                // while compression middleware tend to prefer a balanced one
+                .expect(200, movies)
+                .then(function(res) {
+                  expect(app.requestsProcessed).to.equal(1)
+                  expect(res.headers['content-encoding'] || 'identity').to.equal(
+                    hasBrotliSupport() ? 'br' : 'gzip'
+                  )
+                })
+
+              // some node versions support brotli although supertest still doesnt
+              if (hasBrotliSupport()) {
+                var encoding = {
+                  express: 'identity',
+                  'express+gzip': 'gzip',
+                  restify: 'identity',
+                  'restify+gzip': 'gzip',
+                }[api.name]
+
+                return ret.catch(function() {
+                  return request(app)
+                    .get('/api/movies')
+                    .set('Accept-Encoding', 'gzip')
+                    .expect(200, movies)
+                    .then(function(res) {
+                      expect(res.headers['content-encoding'] || 'identity').to.equal(encoding)
+                    })
+                })
+              } else return ret
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+
+        it('can use compressed cache for identity request', function() {
+          var app = mockAPI.create('10 seconds', meta.config)
+
+          return request(app)
+            .get('/api/movies')
+            .expect(200, movies)
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+              return new Promise(function(resolve) {
+                setTimeout(resolve, 50)
+              })
+            })
+            .then(function() {
+              return request(app)
+                .get('/api/movies')
+                .set('Accept-Encoding', 'identity')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+      })
+    })
+  })
+})
+
+revertedCompressionApis.forEach(function(api) {
   describe(api.name + ' compression tests', function() {
     var db = redis.createClient({ prefix: 'a-prefix:' })
     var mockAPI = api.server
@@ -1279,35 +1510,38 @@ compressionApis.forEach(function(api) {
               return request(app)
                 .get('/api/movies')
                 .set('Accept-Encoding', 'br')
-                .expect('Content-Encoding', 'identity')
                 .expect(200, movies)
-            })
-            .then(function() {
-              expect(app.requestsProcessed).to.equal(1)
+                .then(function(res) {
+                  expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+                  expect(app.requestsProcessed).to.equal(1)
+                })
             })
         })
 
         it('can use compressed cache for uncompressed request', function() {
           var app = mockAPI.create('10 seconds', meta.config)
-          var encoding = api.name === 'restify+gzip' ? 'gzip' : 'deflate'
+          var encoding =
+            api.name === 'restify+gzip (after)'
+              ? 'identity' // won't cache compressed
+              : 'deflate'
 
           return request(app)
             .get('/api/movies')
             .set('Accept-Encoding', encoding)
-            .expect('Content-Encoding', encoding)
             .expect(200, movies)
-            .then(function() {
+            .then(function(res) {
+              expect(res.headers['content-encoding'] || 'identity').to.equal(encoding)
               expect(app.requestsProcessed).to.equal(1)
             })
             .then(function() {
               return request(app)
                 .get('/api/movies')
                 .set('Accept-Encoding', '')
-                .expect('Content-Encoding', 'identity')
                 .expect(200, movies)
-            })
-            .then(function() {
-              expect(app.requestsProcessed).to.equal(1)
+                .then(function(res) {
+                  expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+                  expect(app.requestsProcessed).to.equal(1)
+                })
             })
         })
 
@@ -1326,11 +1560,11 @@ compressionApis.forEach(function(api) {
               return request(app)
                 .get('/api/movies')
                 .set('Accept-Encoding', 'unknown')
-                .expect('Content-Encoding', 'identity')
                 .expect(200, movies)
-            })
-            .then(function() {
-              expect(app.requestsProcessed).to.equal(1)
+                .then(function(res) {
+                  expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+                  expect(app.requestsProcessed).to.equal(1)
+                })
             })
         })
 
@@ -1569,7 +1803,7 @@ describe('Redis support', function() {
                   }),
                 ])
                 resolve(promiseAll)
-              }, 10)
+              }, 100)
             })
               .then(function(promiseAllReturn) {
                 var elapsedTime1 = promiseAllReturn[0][0]
@@ -1627,7 +1861,7 @@ describe('Redis support', function() {
                   }),
                 ])
                 resolve(promiseAll)
-              }, 10)
+              }, 100)
             })
               .then(function(promiseAllReturn) {
                 var elapsedTime1 = promiseAllReturn[0][0]

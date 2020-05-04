@@ -12,12 +12,12 @@ function MockAPI(expiration, options, toggle, localOptions) {
     next()
   })
 
-  // ENABLE COMPRESSION
-  app.use(compression({ threshold: 1 }))
-
   // ENABLE APICACHE
   app.use(apicache.middleware(expiration, toggle, localOptions))
   app.apicache = apicache
+
+  // ENABLE COMPRESSION
+  app.use(compression({ threshold: 1 }))
 
   // ADD API ROUTES
   app = addRoutes(app)

@@ -17,13 +17,13 @@ MemoryCache.prototype.createWriteStream = function(
   add
 ) {
   if (key in this.lock) {
-    return Promise.resolve(
-      new stream.Writable({
-        write(_c, _e, cb) {
-          cb()
-        },
-      })
-    )
+    var wstream = new stream.Writable({
+      write(_c, _e, cb) {
+        cb()
+      },
+    })
+    wstream.isLocked = true
+    return Promise.resolve(wstream)
   }
 
   this.lock[key] = null
@@ -87,11 +87,13 @@ MemoryCache.prototype.createWriteStream = function(
       })
       .on('finish', function() {
         // if node >= 8
-        if (typeof this._final === 'function') return releaseLock()
+        if (typeof this._final === 'function') return setImmediate(releaseLock)
 
         new Promise(function(resolve) {
           final(resolve)
-        }).then(releaseLock)
+        }).then(function() {
+          setImmediate(releaseLock)
+        })
       })
   )
 }

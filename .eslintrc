@@ -9,7 +9,10 @@
   "globals": {
     "describe": false,
     "it": false,
-    "beforeEach": false
+    "before": false,
+    "after": false,
+    "beforeEach": false,
+    "afterEach": false
   },
   "rules": {
     "indent": ["error", 2, { "FunctionExpression": { "parameters": "first" }, "SwitchCase": 1 }]
