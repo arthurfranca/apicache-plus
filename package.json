@@ -13,7 +13,7 @@
     "npm": ">=5.8.0"
   },
   "description": "An ultra-simplified API response caching middleware for Express/Node using plain-english durations.",
-  "main": "./src/apicache-plus.js",
+  "main": "./src/apicache.js",
   "repository": {
     "type": "git",
     "url": "https://github.com/arthurfranca/apicache-plus.git"
