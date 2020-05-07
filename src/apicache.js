@@ -1,10 +1,10 @@
 var url = require('url')
 var zlib = require('zlib')
+var accepts = require('accepts')
 var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
 var pkg = require('../package.json')
-var accepts = require('accepts')
 
 var t = {
   ms: 1,

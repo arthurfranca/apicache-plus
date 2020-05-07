@@ -669,7 +669,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('returns cached response from write+end', function() {
-        var app = mockAPI.create('10 seconds', {})
+        var app = mockAPI.create('10 seconds')
 
         return request(app)
           .get('/api/writeandend')
@@ -1153,7 +1153,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             '/sameroute',
             this.otherRegularMiddleware,
             this.regularMiddleware,
-            // this is starting one cause of patched res functions gets called at reverse order
+            // this is starting one cause patched res functions gets called at reverse order
             this.skippingMiddleware,
             this.respond
           )
@@ -1612,7 +1612,7 @@ describe('Redis support', function() {
 
   apis.forEach(function(api) {
     describe(api.name + ' tests', function() {
-      this.timeout(3000)
+      this.timeout(4000)
       var mockAPI = api.server
 
       it('properly caches a request', function() {
@@ -1776,6 +1776,17 @@ describe('Redis support', function() {
       it('can download data even if key gets deleted in the middle of it', function() {
         var db = redis.createClient({ prefix: 'a-prefix:' })
         var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
+        function resolveWhenKeyIsCached() {
+          return app.apicache.getIndex().then(function(keys) {
+            if (keys.all.length === 0) {
+              return new Promise(function(resolve) {
+                setTimeout(function() {
+                  resolve(resolveWhenKeyIsCached())
+                }, 5)
+              })
+            }
+          })
+        }
 
         var then = Date.now()
         return request(app)
@@ -1786,9 +1797,9 @@ describe('Redis support', function() {
             expect(app.requestsProcessed).to.equal(1)
             expect(res.text.slice(0, 5)).to.equal('aaaaa')
             then = Date.now()
-            return new Promise(function(resolve) {
-              setTimeout(function() {
-                var promiseAll = Promise.all([
+            return resolveWhenKeyIsCached()
+              .then(function() {
+                return Promise.all([
                   request(app)
                     .get('/api/bigresponse')
                     .then(function(otherRes) {
@@ -1799,12 +1810,10 @@ describe('Redis support', function() {
                       app.apicache.clear('/api/bigresponse').then(function(deleteCount) {
                         resolve([Date.now() - then, deleteCount])
                       })
-                    }, resTime / 10)
+                    }, resTime / 7)
                   }),
                 ])
-                resolve(promiseAll)
-              }, 100)
-            })
+              })
               .then(function(promiseAllReturn) {
                 var elapsedTime1 = promiseAllReturn[0][0]
                 var elapsedTime2 = promiseAllReturn[1][0]
@@ -1834,6 +1843,17 @@ describe('Redis support', function() {
       it('can download data even if key group gets deleted in the middle of it', function() {
         var db = redis.createClient({ prefix: 'a-prefix:' })
         var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
+        function resolveWhenKeyIsCached() {
+          return app.apicache.getIndex().then(function(keys) {
+            if (keys.all.length === 0) {
+              return new Promise(function(resolve) {
+                setTimeout(function() {
+                  resolve(resolveWhenKeyIsCached())
+                }, 5)
+              })
+            }
+          })
+        }
 
         var then = Date.now()
         return request(app)
@@ -1844,9 +1864,9 @@ describe('Redis support', function() {
             expect(app.requestsProcessed).to.equal(1)
             expect(res.text.slice(0, 5)).to.equal('aaaaa')
             then = Date.now()
-            return new Promise(function(resolve) {
-              setTimeout(function() {
-                var promiseAll = Promise.all([
+            return resolveWhenKeyIsCached()
+              .then(function() {
+                return Promise.all([
                   request(app)
                     .get('/api/bigresponse')
                     .then(function(otherRes) {
@@ -1857,12 +1877,10 @@ describe('Redis support', function() {
                       app.apicache.clear('bigresponsegroup').then(function(deleteCount) {
                         resolve([Date.now() - then, deleteCount])
                       })
-                    }, resTime / 10)
+                    }, resTime / 7)
                   }),
                 ])
-                resolve(promiseAll)
-              }, 100)
-            })
+              })
               .then(function(promiseAllReturn) {
                 var elapsedTime1 = promiseAllReturn[0][0]
                 var elapsedTime2 = promiseAllReturn[1][0]
