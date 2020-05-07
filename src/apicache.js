@@ -4,6 +4,7 @@ var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
 var pkg = require('../package.json')
+var accepts = require('accepts')
 
 var t = {
   ms: 1,
@@ -477,11 +478,12 @@ function ApiCache() {
     var isntRestifyGzipMiddlewareAttached = !response.handledGzip
     // dont use headers['content-encoding'] as it may be already changed to gzip by restify middleware
     var cachedEncoding = (cacheObjectHeaders['content-encoding'] || 'identity').split(',')[0]
+    var requestAccepts = accepts(request)
     if (
       (cachedEncoding === 'identity' ||
         (isntRestifyGzipMiddlewareAttached &&
           !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || ''))) &&
-      (request.acceptsEncodings || request.acceptsEncoding).call(request, cachedEncoding)
+      requestAccepts.encodings(cachedEncoding)
     ) {
       // Doing response.writeHead(cacheObject.status || 200, headers)
       // can make writeHead patch from some compression middlewares (e.g. restify's gzip one) fail
@@ -490,10 +492,7 @@ function ApiCache() {
       preWriteHead(response, cacheObject.status || 200, headers)
       return getRstream().pipe(response)
       // try to decompress
-    } else if (
-      cachedEncoding !== 'identity' &&
-      (request.acceptsEncodings || request.acceptsEncoding).call(request, 'identity')
-    ) {
+    } else if (cachedEncoding !== 'identity' && requestAccepts.encodings('identity')) {
       var tstream
       if (cachedEncoding === 'br' && zlib.createBrotliDecompress) {
         tstream = zlib.createBrotliDecompress()
