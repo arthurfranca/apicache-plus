@@ -8,7 +8,11 @@
   "extends": ["standard", "plugin:prettier/recommended"],
   "globals": {
     "describe": false,
-    "it": false
+    "it": false,
+    "before": false,
+    "after": false,
+    "beforeEach": false,
+    "afterEach": false
   },
   "rules": {
     "indent": ["error", 2, { "FunctionExpression": { "parameters": "first" }, "SwitchCase": 1 }]

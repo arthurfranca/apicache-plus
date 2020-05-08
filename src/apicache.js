@@ -1,7 +1,9 @@
 var url = require('url')
 var zlib = require('zlib')
+var accepts = require('accepts')
 var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
+var Compressor = require('./compressor')
 var pkg = require('../package.json')
 
 var t = {
@@ -34,7 +36,8 @@ var logDuration = function(d, prefix) {
 }
 
 function getSafeHeaders(res) {
-  return res.getHeaders ? res.getHeaders() : res._headers
+  // getHeaders added in node v7.7.0
+  return Object.assign({}, res.getHeaders ? res.getHeaders() : res._headers)
 }
 
 function ApiCache() {
@@ -90,7 +93,7 @@ function ApiCache() {
     if (!response) return false
     var codes = (options || globalOptions).statusCodes
 
-    if (toggle && !toggle(request, response)) {
+    if (response.statusCode === 304 || (toggle && !toggle(request, response))) {
       return false
     }
 
@@ -171,13 +174,40 @@ function ApiCache() {
       })
   }
 
-  var isNodelte7 = (function(ret) {
+  var isNodeLte7 = (function(ret) {
     return function() {
       if (ret !== undefined) return ret
 
       return (ret = parseInt(process.versions.node.split('.')[0], 10) <= 7)
     }
   })()
+
+  function getCurrentResponseHeaders(res, statusMsgOrHeaders, maybeHeaders) {
+    if (statusMsgOrHeaders && typeof statusMsgOrHeaders !== 'string') {
+      maybeHeaders = statusMsgOrHeaders
+    }
+    if (!maybeHeaders) maybeHeaders = {}
+
+    var currentResponseHeaders = getSafeHeaders(res)
+    Object.keys(maybeHeaders).forEach(function(name) {
+      currentResponseHeaders[name.toLowerCase()] = maybeHeaders[name]
+    })
+
+    return currentResponseHeaders
+  }
+
+  function preWriteHead(res, statusCode, statusMsgOrHeaders, maybeHeaders) {
+    if (statusCode) res.statusCode = statusCode
+    if (statusMsgOrHeaders && typeof statusMsgOrHeaders !== 'string') {
+      maybeHeaders = statusMsgOrHeaders
+    } else if (statusMsgOrHeaders) res.statusMessage = statusMsgOrHeaders
+    if (!maybeHeaders) maybeHeaders = {}
+
+    Object.keys(maybeHeaders).forEach(function(name) {
+      res.setHeader(name, maybeHeaders[name])
+    })
+  }
+
   function makeResponseCacheable(req, res, next, key, duration, strDuration, toggle, options) {
     var shouldCacheRes = (function(shouldIt) {
       return function(req, res, toggle, options) {
@@ -186,21 +216,18 @@ function ApiCache() {
       }
     })()
 
-    // monkeypatch res.end to create cache object
-    res._apicache = {
+    // monkeypatch res to create cache object
+    var apicacheResPatches = {
       write: res.write,
       writeHead: res.writeHead,
       end: res.end,
-      cacheable: true,
-      content: undefined,
     }
 
-    // append header overwrites if applicable
-    Object.keys(options.headers).forEach(function(name) {
-      res.setHeader(name, options.headers[name])
-    })
+    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
+      if (res._shouldCacheResWriteHeadVersionAlreadyRun) {
+        return apicacheResPatches.writeHead.apply(this, arguments)
+      }
 
-    res.writeHead = function(statusCode) {
       res.statusCode = statusCode
 
       // add cache control headers
@@ -215,35 +242,58 @@ function ApiCache() {
         }
       }
 
-      return res._apicache.writeHead.apply(this, arguments)
+      if (shouldCacheRes(req, res, toggle, options)) {
+        // append header overwrites if applicable
+        Object.keys(options.headers).forEach(function(name) {
+          res.setHeader(name, options.headers[name])
+        })
+        res._currentResponseHeaders = getCurrentResponseHeaders(
+          res,
+          statusMsgOrHeaders,
+          maybeHeaders
+        )
+        res._shouldCacheResWriteHeadVersionAlreadyRun = true
+      }
+
+      return apicacheResPatches.writeHead.apply(this, arguments)
     }
 
     var getWstream = (function(wstream) {
-      return function() {
+      return function(method, chunk, encoding) {
         if (wstream) return wstream
 
-        if (!shouldCacheRes(req, res, toggle, options)) {
+        if (
+          res._shouldCacheResWriteOrEndVersionAlreadyRun ||
+          !shouldCacheRes(req, res, toggle, options)
+        ) {
           var emptyFn = function() {}
           return (wstream = Promise.resolve({ write: emptyFn, end: emptyFn }))
         }
 
+        res._shouldCacheResWriteOrEndVersionAlreadyRun = true
+
         var getCacheObject = function() {
-          var headers = getSafeHeaders(res)
-          return createCacheObject(res.statusCode, headers)
+          return createCacheObject(res.statusCode, res._currentResponseHeaders || {})
         }
         var getGroup = function() {
           return req.apicacheGroup
         }
         var expireCallback = globalOptions.events.expire
         var cache = redisCache || memCache
-        return (wstream = cache
+        var chunkSize =
+          // if res.end was called first, it will have only one chunk
+          method === 'end'
+            ? Buffer.byteLength(chunk || '', encoding)
+            : res.socket.writableHighWaterMark
+
+        var cacheWstream = cache
           .createWriteStream(
             key,
             getCacheObject,
             duration,
             expireCallback,
             getGroup,
-            res.socket.writableHighWaterMark,
+            chunkSize,
             // this is needed while memCache index/groups are still handled externally
             !redisCache &&
               function(statusCode, headers, data, encoding) {
@@ -254,21 +304,51 @@ function ApiCache() {
           )
           .then(function(wstream) {
             return wstream
-              .on('error', function() {
-                debug('error in makeResponseCacheable function')
+              .on('error', function(err) {
+                debug('error in makeResponseCacheable function', err)
               })
               .on('finish', function() {
                 debugCacheAddition(cache, key, strDuration, req, res)
               })
-          }))
+          })
+
+        return (wstream = cacheWstream.then(function(wstream) {
+          if (wstream.isLocked) return wstream
+          var isRestifyGzipMiddlewareAttached = !!res.handledGzip
+          if (isRestifyGzipMiddlewareAttached) {
+            // the middleware will always preset content-encoding to gzip even if
+            // apicache is about to receive raw response stream (middleware attached before apicache)
+            if (Number.isInteger((res._currentResponseHeaders || {})['content-length'])) {
+              delete res._currentResponseHeaders['content-encoding']
+            }
+
+            return wstream
+          }
+
+          var tstream = Compressor.run(
+            {
+              chunkSize: chunkSize,
+              requestMehod: req.method,
+              responseStatusCode: res.statusCode,
+              responseMethod: method,
+              responseHeaders: res._currentResponseHeaders,
+            },
+            debug
+          ).on('error', function() {
+            debug('error in makeResponseCacheable function')
+            wstream.emit('error')
+          })
+          tstream.pipe(wstream)
+          return tstream
+        }))
       }
     })()
 
     ;['write', 'end'].forEach(function(method) {
       var ret
       res[method] = function(chunk, encoding) {
-        ret = res._apicache[method].apply(this, arguments)
-        getWstream().then(function(wstream) {
+        ret = apicacheResPatches[method].apply(this, arguments)
+        getWstream(method, chunk, encoding).then(function(wstream) {
           wstream[method](chunk, encoding)
         })
         return ret
@@ -276,7 +356,7 @@ function ApiCache() {
     })
 
     // res.end(data) writes data twice
-    if (isNodelte7()) {
+    if (isNodeLte7()) {
       var _end = res.end
       res.end = function(chunk, encoding) {
         if (Buffer.byteLength(chunk || '') > 0) {
@@ -296,6 +376,15 @@ function ApiCache() {
     if (toggle && !toggle(request, response)) {
       return next()
     }
+
+    var elapsed = new Date() - request.apicacheTimer
+    debug(
+      'sending cached',
+      redisCache ? '(redis)' : '(memory-cache)',
+      'version of',
+      cacheObject.key,
+      logDuration(elapsed)
+    )
 
     var headers = getSafeHeaders(response)
     var cacheObjectHeaders = cacheObject.headers || {}
@@ -384,19 +473,26 @@ function ApiCache() {
         })
     }
 
-    var cachedEncoding = (headers['content-encoding'] || 'identity').split(',')[0]
+    // restify middleware will always gzip when attached before apicache,
+    // even if we change accept-encoding or content-encoding when sending cached version
+    var isntRestifyGzipMiddlewareAttached = !response.handledGzip
+    // dont use headers['content-encoding'] as it may be already changed to gzip by restify middleware
+    var cachedEncoding = (cacheObjectHeaders['content-encoding'] || 'identity').split(',')[0]
+    var requestAccepts = accepts(request)
     if (
       (cachedEncoding === 'identity' ||
-        !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
-      (request.acceptsEncodings || request.acceptsEncoding).call(request, cachedEncoding)
+        (isntRestifyGzipMiddlewareAttached &&
+          !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || ''))) &&
+      requestAccepts.encodings(cachedEncoding)
     ) {
-      response.writeHead(cacheObject.status || 200, headers)
+      // Doing response.writeHead(cacheObject.status || 200, headers)
+      // can make writeHead patch from some compression middlewares (e.g. restify's gzip one) fail
+      // Using res.writeHead with headers that don't mess with content-length / content-encoding
+      // is mostly ok
+      preWriteHead(response, cacheObject.status || 200, headers)
       return getRstream().pipe(response)
       // try to decompress
-    } else if (
-      cachedEncoding !== 'identity' &&
-      (request.acceptsEncodings || request.acceptsEncoding).call(request, 'identity')
-    ) {
+    } else if (cachedEncoding !== 'identity' && requestAccepts.encodings('identity')) {
       var tstream
       if (cachedEncoding === 'br' && zlib.createBrotliDecompress) {
         tstream = zlib.createBrotliDecompress()
@@ -407,11 +503,23 @@ function ApiCache() {
         throw new Error(errorMessage)
       }
 
-      headers['content-encoding'] = 'identity'
-      response.writeHead(cacheObject.status || 200, headers)
+      delete headers['content-encoding']
+      preWriteHead(response, cacheObject.status || 200, headers)
       tstream.on('error', function() {
         debug('error in decompression stream')
         this.unpipe()
+        // erroed cause didn't need to decompress
+        // probably due to restify gzip middleware setting content-encoding to gzip too early
+        getRstream()
+          .on('error', function() {
+            debug('error in decompression stream')
+            this.unpipe()
+            response.end()
+            // if node < 8
+            if (!this.destroy) return this.pause()
+            this.destroy()
+          })
+          .pipe(response)
         // if node < 8
         if (!this.destroy) return this.pause()
         this.destroy()
@@ -788,15 +896,6 @@ function ApiCache() {
         .then(function(cached) {
           // send if cache hit from memory-cache
           if (cached) {
-            var elapsed = new Date() - req.apicacheTimer
-            debug(
-              'sending cached',
-              redisCache ? '(redis)' : '(memory-cache)',
-              'version of',
-              key,
-              logDuration(elapsed)
-            )
-
             perf.hit(key)
             try {
               return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)

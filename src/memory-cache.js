@@ -17,17 +17,18 @@ MemoryCache.prototype.createWriteStream = function(
   add
 ) {
   if (key in this.lock) {
-    return Promise.resolve(
-      new stream.Writable({
-        write(_c, e, cb) {
-          cb()
-        },
-      })
-    )
+    var wstream = new stream.Writable({
+      write(_c, _e, cb) {
+        cb()
+      },
+    })
+    wstream.isLocked = true
+    return Promise.resolve(wstream)
   }
 
-  this.lock.key = null
+  this.lock[key] = null
   if (!highWaterMark) highWaterMark = DEFAULT_HIGH_WATER_MARK
+
   var data
   var cacheEncoding
   var hasErrored = false
@@ -38,8 +39,8 @@ MemoryCache.prototype.createWriteStream = function(
     }
   })()
   var releaseLock = function() {
-    delete this.lock.key
-  }
+    delete this.lock[key]
+  }.bind(this)
 
   var final = function(cb) {
     if (hasErrored) return cb()
@@ -54,6 +55,7 @@ MemoryCache.prototype.createWriteStream = function(
       }
 
       add(value.status, value.headers, data, value.encoding)
+      cb()
     } catch (err) {
       cb(err)
     }
@@ -85,11 +87,13 @@ MemoryCache.prototype.createWriteStream = function(
       })
       .on('finish', function() {
         // if node >= 8
-        if (typeof this._final === 'function') return releaseLock()
+        if (typeof this._final === 'function') return setImmediate(releaseLock)
 
         new Promise(function(resolve) {
           final(resolve)
-        }).then(releaseLock)
+        }).then(function() {
+          setImmediate(releaseLock)
+        })
       })
   )
 }

@@ -169,19 +169,23 @@ RedisCache.prototype.createWriteStream = (function() {
           })
           .on('finish', function() {
             // if node >= 8
-            if (typeof this._final === 'function') return releaseLock()
+            if (typeof this._final === 'function') return setImmediate(releaseLock)
 
             new Promise(function(resolve) {
               final(resolve)
-            }).then(releaseLock)
+            }).then(function() {
+              setImmediate(releaseLock)
+            })
           })
       })
       .catch(function() {
-        return new stream.Writable({
-          write(_c, e, cb) {
+        var wstream = new stream.Writable({
+          write(_c, _e, cb) {
             cb()
           },
         })
+        wstream.isLocked = true
+        return wstream
       })
   }
 })()
