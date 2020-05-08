@@ -4,9 +4,9 @@
 
 [![npm version](https://badge.fury.io/js/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
 [![node version support](https://img.shields.io/node/v/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
-[![Build Status via Travis CI](https://travis-ci.org/arthurfranca/apicache.svg?branch=master)](https://travis-ci.org/arthurfranca/apicache-plus)
+[![Build Status via Travis CI](https://travis-ci.org/arthurfranca/apicache-plus.svg?branch=master)](https://travis-ci.org/arthurfranca/apicache-plus)
 [![Coverage Status](https://coveralls.io/repos/github/arthurfranca/apicache-plus/badge.svg?branch=master)](https://coveralls.io/github/arthurfranca/apicache-plus?branch=master)
-[![NPM downloads](https://img.shields.io/npm/dt/apicache.svg?style=flat-square)](https://www.npmjs.com/package/apicache)
+[![NPM downloads](https://img.shields.io/npm/dt/apicache-plus.svg?style=flat)](https://www.npmjs.com/package/apicache-plus)
 
 ## Why?
 
@@ -252,4 +252,6 @@ The presence of this header flag will bypass the cache, ensuring you aren't look
 
 ### Changelog
 
+- **v1.6.0** - cache is always stored compressed, can attach multiple apicache middlewares to same route for conditional use, increase third-party compression middleware compatibility and some minor bugfixes
+- **v1.5.5** - self package import fix (thanks [@robbinjanssen](https://github.com/robbinjanssen))
 - **v1.5.4** - created apicache-plus from apicache v1.5.3 with backward compatibility (thanks [@kwhitley](https://github.com/kwhitley) and [all original library contributors](https://github.com/kwhitley/apicache#contributors))

@@ -1,6 +1,6 @@
 {
   "name": "apicache-plus",
-  "version": "1.5.5",
+  "version": "1.6.0",
   "scripts": {
     "lint": "eslint .",
     "test": "nyc mocha $(find test -name '*.test.js') --recursive",
