@@ -44,6 +44,94 @@ RedisCache.prototype._acquireLock = function(key, pttl) {
   return this.redlock.lock('lock:' + key, pttl || DEFAULT_LOCK_PTTL)
 }
 
+var LOCK_SEPARATOR = '$api-cache$'
+var DELETE_IF_IT_WASNT_DELETED_BEFORE = `
+  if redis.call("get",KEYS[1]) == ARGV[1] then
+      return redis.call("del",KEYS[1])
+  else
+      return 0
+  end
+`
+// return true if the request with this id just acquired or was already holding the lock
+RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
+  var lockKey = 'lock-with-id:' + key
+  var lockValue = id + LOCK_SEPARATOR + (Date.now() + (pttl || DEFAULT_LOCK_PTTL))
+  var that = this
+  return new Promise(function(resolve) {
+    // try acquiring lock
+    that.redis.setnx(lockKey, lockValue, function(err, res) {
+      if (err) {
+        if (err) that.debug('error in redisCache.acquireLockWithId function', err)
+        return resolve(false)
+      }
+
+      if (res === 1) {
+        resolve(true)
+      } else {
+        // check if it is stale and its id
+        that.redis.get(lockKey, function(err, value) {
+          if (err) {
+            if (err) that.debug('error in redisCache.acquireLockWithId function', err)
+            return resolve(false)
+          }
+
+          var isExpired
+          var holderId
+          if (value) {
+            var split = value.split(LOCK_SEPARATOR)
+            holderId = split[0]
+            var ts = split[1]
+            isExpired = parseInt(ts, 10) <= Date.now()
+          } else isExpired = true
+
+          if (!isExpired) resolve(holderId === id)
+          else {
+            // not safe using watch+multi: https://github.com/NodeRedis/node-redis/issues/1320#issuecomment-436283351
+            that.redis.eval(DELETE_IF_IT_WASNT_DELETED_BEFORE, 1, lockKey, value, function(
+              err,
+              res
+            ) {
+              if (err) that.debug('error in redisCache.acquireLockWithId function', err)
+              resolve(that._acquireLockWithId(key, id, pttl))
+            })
+          }
+        })
+      }
+    })
+  })
+}
+
+var DELETE_IF_IT_IS_HELD_BY_SAME_CLIENT_ID = `
+  value = redis.call("get",KEYS[1])
+  if value == false then return 1 end
+
+  if string.sub(value, 1, string.len(ARGV[1])) == ARGV[1] then
+      return redis.call("del",KEYS[1])
+  else
+      return 0
+  end
+`
+RedisCache.prototype.releaseLockWithId = function(key, id) {
+  var that = this
+  var lockKey = 'lock-with-id:' + key
+
+  return new Promise(function(resolve) {
+    that.redis.eval(
+      DELETE_IF_IT_IS_HELD_BY_SAME_CLIENT_ID,
+      1,
+      lockKey,
+      id + LOCK_SEPARATOR,
+      function(err, res) {
+        if (err) {
+          if (err) that.debug('error in redisCache.acquireLockWithId function', err)
+          resolve()
+        }
+        resolve(res === 1)
+      }
+    )
+  })
+}
+
 var DEFAULT_HIGH_WATER_MARK = 16384
 RedisCache.prototype.createWriteStream = (function() {
   var TYPICAL_3G_DOWNLOAD_SPEED = (1000000 * 0.1) / 8 / 1000 // 0.1 Mbit/s in bytes/ms
