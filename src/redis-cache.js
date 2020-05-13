@@ -1,13 +1,6 @@
 var stream = require('stream')
 var Redlock = require('redlock')
-function generateUuidV4(a, b) {
-  for (
-    b = a = '';
-    a++ < 36;
-    b += (a * 51) & 52 ? (a ^ 15 ? 8 ^ (Math.random() * (a ^ 20 ? 16 : 4)) : 4).toString(16) : '-'
-  );
-  return b
-}
+var generateUuidV4 = require('uuid').v4
 
 function RedisCache(options, debug) {
   this.redis = options.redisClient

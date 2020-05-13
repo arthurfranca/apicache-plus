@@ -2,6 +2,7 @@ var url = require('url')
 var zlib = require('zlib')
 var accepts = require('accepts')
 var stream = require('stream')
+var generateUuidV4 = require('uuid').v4
 var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
@@ -918,18 +919,6 @@ function ApiCache() {
           debug(err)
           return next()
         }
-      }
-
-      function generateUuidV4(a, b) {
-        for (
-          b = a = '';
-          a++ < 36;
-          b +=
-            (a * 51) & 52
-              ? (a ^ 15 ? 8 ^ (Math.random() * (a ^ 20 ? 16 : 4)) : 4).toString(16)
-              : '-'
-        );
-        return b
       }
 
       var isSameRequestStackAllowedToMakeResponseCacheable = function() {
