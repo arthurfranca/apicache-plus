@@ -48,10 +48,10 @@ function assertNumRequestsProcessed(app, n) {
   }
 }
 
-function clearAllTimeouts(done) {
+function clearAllTimeouts(cb) {
   var id = setTimeout(function() {
     while (id--) clearTimeout(id)
-    done()
+    cb()
   }, 0)
 }
 
@@ -1082,7 +1082,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('clearing cache cancels expiration callback', function() {
-        var timeout = 60
+        var timeout = 80
         var app = mockAPI.create(timeout)
         var then = Date.now()
 

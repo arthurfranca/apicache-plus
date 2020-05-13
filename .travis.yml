@@ -6,7 +6,7 @@ node_js:
   - 10.0.0
   - 11.0.0
   - 12.0.0
-  - 13.0.0
+  - 13.12.0
   - 14.0.0
 before_install:
   - dpkg --compare-versions `npm -v` ge 5.8 || npm i -g npm@^5.8
