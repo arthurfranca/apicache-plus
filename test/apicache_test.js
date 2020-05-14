@@ -1005,6 +1005,30 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it("don't send 304 if set if-match header", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers['last-modified']).to.be.undefined
+            return res.headers.etag
+          })
+          .then(function(etag) {
+            return request(app)
+              .get('/api/movies')
+              .set('if-none-match', etag)
+              .set('if-match', 'a-strong-etag')
+              .expect(200, movies)
+              .expect('etag', etag)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
       it("don't send 304 if set if-unmodified-since header", function() {
         var app = mockAPI.create('10 seconds')
 
@@ -1021,6 +1045,54 @@ describe('.middleware {MIDDLEWARE}', function() {
               .get('/api/ifmodifiedsince')
               .set('if-unmodified-since', new Date().toUTCString())
               .set('if-modified-since', lastModified)
+              .expect(200, 'hi')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it("don't send 304 if set if-range header with an etag", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers['last-modified']).to.be.undefined
+            return res.headers.etag
+          })
+          .then(function(etag) {
+            return request(app)
+              .get('/api/movies')
+              .set('if-none-match', etag)
+              .set('if-range', 'a-strong-etag')
+              .expect(200, movies)
+              .expect('etag', etag)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it("don't send 304 if set if-range header with a date", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            var date = new Date().toUTCString()
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('if-unmodified-since', date)
+              .set('if-range', 'a-strong-etag', date)
               .expect(200, 'hi')
               .expect('last-modified', lastModified)
           })

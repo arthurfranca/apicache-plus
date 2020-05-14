@@ -254,7 +254,7 @@ The presence of this header value will bypass the cache, ensuring you aren't loo
 
 ### Changelog
 
-- **v1.8.0** - add isBypassable and afterHit options
+- **v1.8.0** - add isBypassable and afterHit options and extra 304 condition checks
 - **v1.7.0** - enforce request idempotence by cache key when not cached yet
 - **v1.6.0** - cache is always stored compressed, can attach multiple apicache middlewares to same route for conditional use, increase third-party compression middleware compatibility and some minor bugfixes
 - **v1.5.5** - self package import fix (thanks [@robbinjanssen](https://github.com/robbinjanssen))

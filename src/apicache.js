@@ -443,14 +443,21 @@ function ApiCache() {
       })
     }
 
-    var clientDoesntWantToReloadItsCache = function() {
+    function hasNoBodyRequestingPreconditionCheck() {
+      return (
+        !request.headers['if-match'] &&
+        !request.headers['if-unmodified-since'] &&
+        !request.headers['if-range']
+      )
+    }
+    function clientDoesntWantToReloadItsCache() {
       return (
         !request.headers['cache-control'] ||
         !CACHE_CONTROL_NO_CACHE_REGEXP.test(request.headers['cache-control'])
       )
     }
     // test Etag against If-None-Match for 304
-    var isEtagFresh = function() {
+    function isEtagFresh() {
       var cachedEtag = cacheObjectHeaders.etag
       var requestEtags = (request.headers['if-none-match'] || '').replace('*', '').split(/\s*,\s*/)
       return Boolean(
@@ -465,7 +472,7 @@ function ApiCache() {
               .indexOf(cachedEtag) !== -1)
       )
     }
-    var isResourceFresh = function() {
+    function isResourceFresh() {
       var cachedLastModified = cacheObjectHeaders['last-modified']
       var requestModifiedSince = request.headers['if-modified-since']
       if (!cachedLastModified || !requestModifiedSince) return false
@@ -477,7 +484,7 @@ function ApiCache() {
       }
     }
     if (
-      !request.headers['if-unmodified-since'] &&
+      hasNoBodyRequestingPreconditionCheck() &&
       clientDoesntWantToReloadItsCache() &&
       (isEtagFresh() || isResourceFresh())
     ) {
@@ -492,7 +499,7 @@ function ApiCache() {
       return response.end()
     }
 
-    var getRstream = function() {
+    function getRstream() {
       return (redisCache || memCache)
         .createReadStream(
           cacheObject.key,
