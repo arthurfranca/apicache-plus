@@ -1,6 +1,8 @@
 var url = require('url')
 var zlib = require('zlib')
 var accepts = require('accepts')
+var stream = require('stream')
+var generateUuidV4 = require('uuid').v4
 var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
@@ -208,7 +210,24 @@ function ApiCache() {
     })
   }
 
-  function makeResponseCacheable(req, res, next, key, duration, strDuration, toggle, options) {
+  function makeResponseCacheable(
+    req,
+    res,
+    next,
+    key,
+    duration,
+    strDuration,
+    toggle,
+    options,
+    afterFn
+  ) {
+    if (!afterFn) afterFn = Promise.resolve.bind(Promise)
+    var afterTryingToCache = (function(isCalled) {
+      return function() {
+        if (isCalled !== undefined) return isCalled
+        return (isCalled = afterFn())
+      }
+    })()
     var shouldCacheRes = (function(shouldIt) {
       return function(req, res, toggle, options) {
         if (shouldIt !== undefined) return shouldIt
@@ -266,8 +285,12 @@ function ApiCache() {
           res._shouldCacheResWriteOrEndVersionAlreadyRun ||
           !shouldCacheRes(req, res, toggle, options)
         ) {
-          var emptyFn = function() {}
-          return (wstream = Promise.resolve({ write: emptyFn, end: emptyFn }))
+          var emptyWstream = new stream.Writable({
+            write(_c, _e, cb) {
+              cb()
+            },
+          }).on('finish', afterTryingToCache)
+          return (wstream = Promise.resolve(emptyWstream))
         }
 
         res._shouldCacheResWriteOrEndVersionAlreadyRun = true
@@ -308,8 +331,10 @@ function ApiCache() {
                 debug('error in makeResponseCacheable function', err)
               })
               .on('finish', function() {
+                afterTryingToCache()
                 debugCacheAddition(cache, key, strDuration, req, res)
               })
+              .on('unpipe', afterTryingToCache)
           })
 
         return (wstream = cacheWstream.then(function(wstream) {
@@ -334,8 +359,8 @@ function ApiCache() {
               responseHeaders: res._currentResponseHeaders,
             },
             debug
-          ).on('error', function() {
-            debug('error in makeResponseCacheable function')
+          ).on('error', function(err) {
+            debug('error in makeResponseCacheable function', err)
             wstream.emit('error')
           })
           tstream.pipe(wstream)
@@ -868,9 +893,11 @@ function ApiCache() {
         key += '$$appendKey=' + appendKey
       }
 
+      var cache = redisCache || memCache
       var _makeResponseCacheable = function() {
         try {
           perf.miss(key)
+          req.makeResponseCacheableCount = (req.makeResponseCacheableCount || 0) + 1
           return makeResponseCacheable(
             req,
             res,
@@ -879,7 +906,14 @@ function ApiCache() {
             duration,
             strDuration,
             middlewareToggle,
-            opt
+            opt,
+            function() {
+              if (--req.makeResponseCacheableCount > 0) return Promise.resolve()
+              return cache.releaseLockWithId(
+                'make-cacheable:' + key,
+                typeof req.id === 'function' ? req.id() : req.id
+              )
+            }
           )
         } catch (err) {
           debug(err)
@@ -887,37 +921,59 @@ function ApiCache() {
         }
       }
 
-      // attempt cache hit
-      var cachedPromise = !redisCache
-        ? Promise.resolve(memCache.getValue(key))
-        : redisCache.getValue(key)
+      var isSameRequestStackAllowedToMakeResponseCacheable = function() {
+        return cache.acquireLockWithId(
+          'make-cacheable:' + key,
+          typeof req.id === 'function' ? req.id() : req.id
+        )
+      }
+      var maybeMakeResponseCacheable = function() {
+        if (!req.id) req.id = generateUuidV4()
 
-      return cachedPromise
-        .then(function(cached) {
-          // send if cache hit from memory-cache
-          if (cached) {
-            perf.hit(key)
-            try {
-              return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
-            } catch (err) {
-              debug(err)
-              if (res.headersSent) {
-                perf.miss(key)
-                return res.end()
-              }
-
-              return _makeResponseCacheable()
-            }
-          } else {
-            return _makeResponseCacheable()
+        return isSameRequestStackAllowedToMakeResponseCacheable().then(function(isAllowed) {
+          if (isAllowed) return Promise.resolve(_makeResponseCacheable())
+          else {
+            // give time to prior request finish caching
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(attemptCacheHit())
+              }, 10)
+            })
           }
         })
-        .catch(function(err) {
-          debug(err)
-          perf.miss(key)
-          if (res.headersSent) res.end()
-          else next()
-        })
+      }
+
+      function attemptCacheHit() {
+        var cachedPromise = Promise.resolve(cache.getValue(key))
+
+        return cachedPromise
+          .then(function(cached) {
+            if (cached) {
+              perf.hit(key)
+              try {
+                return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
+              } catch (err) {
+                debug(err)
+                if (res.headersSent) {
+                  perf.miss(key)
+                  return res.end()
+                }
+
+                return maybeMakeResponseCacheable()
+              }
+            } else {
+              return maybeMakeResponseCacheable()
+            }
+          })
+          .catch(function(err) {
+            debug(err)
+            perf.miss(key)
+            if (res.headersSent) res.end()
+            else next()
+          })
+      }
+
+      return attemptCacheHit()
     }
 
     cache.options = options

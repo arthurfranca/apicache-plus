@@ -4,6 +4,47 @@ function MemoryCache() {
   this.cache = {}
   this.size = 0
   this.lock = {}
+  this.lockWithId = {}
+}
+
+var DEFAULT_LOCK_PTTL = 30 * 1000 // 30s will be the response init limit
+MemoryCache.prototype.acquireLockWithId = function(key, id, pttl) {
+  var that = this
+  var lock = that.lockWithId[key]
+  if (!pttl) pttl = DEFAULT_LOCK_PTTL
+
+  return new Promise(function(resolve) {
+    if (lock) {
+      if (lock.heldBy === id) return resolve(true)
+      else return resolve(false)
+    }
+
+    var timeout = setTimeout(function() {
+      delete that.lockWithId[key]
+    }, pttl)
+
+    that.lockWithId[key] = {
+      heldBy: id,
+      timeout: timeout,
+    }
+
+    resolve(true)
+  })
+}
+
+MemoryCache.prototype.releaseLockWithId = function(key, id) {
+  var that = this
+
+  return new Promise(function(resolve) {
+    var lock = that.lockWithId[key]
+
+    if (!lock) return resolve(true)
+    else if (lock.heldBy === id) {
+      clearTimeout(lock.timeout)
+      delete that.lockWithId[key]
+      return resolve(true)
+    } else resolve(false)
+  })
 }
 
 var DEFAULT_HIGH_WATER_MARK = 16384
@@ -65,6 +106,7 @@ MemoryCache.prototype.createWriteStream = function(
     new stream.Writable({
       highWaterMark: highWaterMark,
       write(chunk, encoding, cb) {
+        if (hasErrored) return cb()
         try {
           if (data === undefined) {
             if (isBuffer(chunk)) data = Buffer.alloc(0)
@@ -157,9 +199,8 @@ MemoryCache.prototype.delete = function(key) {
 
   if (entry) {
     clearTimeout(entry.timeout)
+    delete this.cache[key]
   }
-
-  delete this.cache[key]
 
   this.size = Object.keys(this.cache).length
 

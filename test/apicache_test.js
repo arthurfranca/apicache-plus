@@ -48,14 +48,15 @@ function assertNumRequestsProcessed(app, n) {
   }
 }
 
-function clearAllTimeouts() {
+function clearAllTimeouts(cb) {
   var id = setTimeout(function() {
     while (id--) clearTimeout(id)
+    cb()
   }, 0)
 }
 
-after(function() {
-  clearAllTimeouts()
+afterEach(function(done) {
+  clearAllTimeouts(done)
 })
 
 describe('.options(opt?) {GETTER/SETTER}', function() {
@@ -1080,32 +1081,44 @@ describe('.middleware {MIDDLEWARE}', function() {
         }, 40)
       })
 
-      it('clearing cache cancels expiration callback', function(done) {
-        var app = mockAPI.create(30)
+      it('clearing cache cancels expiration callback', function() {
+        var timeout = 80
+        var app = mockAPI.create(timeout)
+        var then = Date.now()
 
-        request(app)
+        return request(app)
           .get('/api/movies')
-          .end(function(_err, res) {
+          .then(function(res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
+            var reqTime = Date.now() - then
+            expect(reqTime).to.be.below(timeout)
             expect(app.requestsProcessed).to.equal(1)
+
+            var otherReqTime
+            return Promise.all([
+              request(app)
+                .get('/api/movies')
+                .then(function() {
+                  expect(app.apicache.getIndex().all.length).to.equal(1)
+                  expect(app.apicache.getIndex().all).to.include('/api/movies')
+                  otherReqTime = Date.now() - then
+                  expect(otherReqTime).to.be.below(timeout)
+                  expect(app.requestsProcessed).to.equal(2)
+                }),
+              new Promise(function(resolve) {
+                setTimeout(function() {
+                  expect(app.apicache.getIndex().all.length).to.equal(1)
+                  expect(app.apicache.getIndex().all).to.include('/api/movies')
+                  var anotherReqTime = Date.now() - then
+                  expect(anotherReqTime).to.be.above(timeout)
+                  expect(anotherReqTime).to.be.above(otherReqTime)
+                  expect(anotherReqTime - otherReqTime).to.be.below(timeout)
+                  resolve()
+                }, timeout - reqTime + 1)
+              }),
+            ])
           })
-
-        setTimeout(function() {
-          request(app)
-            .get('/api/movies')
-            .end(function(_err, res) {
-              expect(app.apicache.getIndex().all.length).to.equal(1)
-              expect(app.apicache.getIndex().all).to.include('/api/movies')
-              expect(app.requestsProcessed).to.equal(2)
-            })
-        }, 15)
-
-        setTimeout(function() {
-          expect(app.apicache.getIndex().all.length).to.equal(1)
-          expect(app.apicache.getIndex().all).to.include('/api/movies')
-          done()
-        }, 40)
       })
 
       it('allows defaultDuration to be a parseable string (e.g. "1 week")', function(done) {
@@ -1224,6 +1237,48 @@ describe('.middleware {MIDDLEWARE}', function() {
             .then(function(res) {
               return expect(that.app.requestsProcessed).to.equal(1)
             })
+        })
+      })
+
+      describe('request idempotence', function() {
+        var db = redis.createClient({ prefix: 'a-prefix:' })
+        var configs = [
+          {
+            clientName: 'memory',
+            config: {},
+          },
+          {
+            clientName: 'redis',
+            config: { redisClient: db, redisPrefix: 'a-prefix:' },
+          },
+        ]
+
+        configs.forEach(function(meta) {
+          describe('with ' + meta.clientName + ' cache', function() {
+            if (meta.clientName === 'redis') {
+              after(function(done) {
+                db.flushdb(done)
+              })
+            }
+
+            it('is idempotent', function() {
+              var app = mockAPI.create('2 seconds', meta.config)
+
+              return Promise.all([
+                request(app)
+                  .get('/api/bigresponse')
+                  .expect(200),
+                request(app)
+                  .get('/api/bigresponse')
+                  .expect(200),
+              ]).then(function(responses) {
+                responses.forEach(function(res) {
+                  expect(res.text.slice(-5)).to.equal('final')
+                })
+                expect(app.requestsProcessed).to.equal(1)
+              })
+            })
+          })
         })
       })
     })
@@ -1773,7 +1828,7 @@ describe('Redis support', function() {
           })
       })
 
-      it('can download data even if key gets deleted in the middle of it', function() {
+      it('can download data even if key gets deleted in the middle of it', function(done) {
         var db = redis.createClient({ prefix: 'a-prefix:' })
         var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
         function resolveWhenKeyIsCached() {
@@ -1788,59 +1843,67 @@ describe('Redis support', function() {
           })
         }
 
-        var then = Date.now()
-        return request(app)
+        request(app)
           .get('/api/bigresponse')
           .expect(200)
           .then(function(res) {
-            var resTime = Date.now() - then
             expect(app.requestsProcessed).to.equal(1)
             expect(res.text.slice(0, 5)).to.equal('aaaaa')
-            then = Date.now()
-            return resolveWhenKeyIsCached()
-              .then(function() {
-                return Promise.all([
-                  request(app)
-                    .get('/api/bigresponse')
-                    .then(function(otherRes) {
-                      return [Date.now() - then, otherRes]
-                    }),
-                  new Promise(function(resolve) {
-                    return setTimeout(function() {
-                      app.apicache.clear('/api/bigresponse').then(function(deleteCount) {
-                        resolve([Date.now() - then, deleteCount])
+            expect(res.text.slice(-5)).to.equal('final')
+            var then = Date.now()
+            var clearElapsedTime = Number.MAX_SAFE_INTEGER
+            var deletedKeyCount = 0
+            var runOnceAfterReceivingFirstChunk = (function(memo) {
+              function run(initialChunk) {
+                return app.apicache.clear('/api/bigresponse').then(function(deleteCount) {
+                  clearElapsedTime = Date.now() - then
+                  deletedKeyCount = deleteCount
+                  expect(String(initialChunk).slice(0, 5)).to.equal('aaaaa')
+                })
+              }
+              return function(chunk) {
+                if (memo) return
+                memo = run(chunk)
+              }
+            })()
+            var stream = require('stream')
+            var wstream = new stream.Writable({
+              write(chunk, _e, cb) {
+                runOnceAfterReceivingFirstChunk(chunk)
+                cb()
+              },
+            })
+
+            return resolveWhenKeyIsCached().then(function() {
+              var supertest = request(app).get('/api/bigresponse')
+              supertest
+                .expect(200)
+                .pipe(wstream)
+                .on('finish', function() {
+                  var cachedResTime = Date.now() - then
+                  expect(clearElapsedTime).to.be.below(cachedResTime)
+                  expect(deletedKeyCount).to.equal(2)
+                  expect(app.requestsProcessed).to.equal(1)
+
+                  app.apicache
+                    .getIndex()
+                    .then(function(index) {
+                      expect(index.all.length).to.equal(0)
+                      expect(Object.keys(index.groups).length).to.equal(0)
+                    })
+                    .then(function() {
+                      db.flushdb(function() {
+                        // needed because piping don't auto close server
+                        supertest._server.close()
+                        done()
                       })
-                    }, resTime / 7)
-                  }),
-                ])
-              })
-              .then(function(promiseAllReturn) {
-                var elapsedTime1 = promiseAllReturn[0][0]
-                var elapsedTime2 = promiseAllReturn[1][0]
-                expect(elapsedTime2).to.be.below(elapsedTime1)
-                return [promiseAllReturn[0][1], promiseAllReturn[1][1]]
-              })
-              .then(function(otherResAndDeleteCount) {
-                var cachedRes = otherResAndDeleteCount[0]
-                var deleteCount = otherResAndDeleteCount[1]
-                expect(cachedRes.text).to.equal(res.text)
-                expect(deleteCount).to.equal(2)
-                return app.apicache.getIndex()
-              })
-          })
-          .then(function(index) {
-            expect(app.requestsProcessed).to.equal(1)
-            expect(index.all.length).to.equal(0)
-            expect(Object.keys(index.groups).length).to.equal(0)
-          })
-          .then(function() {
-            return new Promise(function(resolve) {
-              db.flushdb(resolve)
+                    })
+                })
             })
           })
       })
 
-      it('can download data even if key group gets deleted in the middle of it', function() {
+      it('can download data even if key group gets deleted in the middle of it', function(done) {
         var db = redis.createClient({ prefix: 'a-prefix:' })
         var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
         function resolveWhenKeyIsCached() {
@@ -1855,54 +1918,62 @@ describe('Redis support', function() {
           })
         }
 
-        var then = Date.now()
-        return request(app)
+        request(app)
           .get('/api/bigresponse')
           .expect(200)
           .then(function(res) {
-            var resTime = Date.now() - then
             expect(app.requestsProcessed).to.equal(1)
             expect(res.text.slice(0, 5)).to.equal('aaaaa')
-            then = Date.now()
-            return resolveWhenKeyIsCached()
-              .then(function() {
-                return Promise.all([
-                  request(app)
-                    .get('/api/bigresponse')
-                    .then(function(otherRes) {
-                      return [Date.now() - then, otherRes]
-                    }),
-                  new Promise(function(resolve) {
-                    return setTimeout(function() {
-                      app.apicache.clear('bigresponsegroup').then(function(deleteCount) {
-                        resolve([Date.now() - then, deleteCount])
+            expect(res.text.slice(-5)).to.equal('final')
+            var then = Date.now()
+            var clearElapsedTime = Number.MAX_SAFE_INTEGER
+            var deletedKeyCount = 0
+            var runOnceAfterReceivingFirstChunk = (function(memo) {
+              function run(initialChunk) {
+                return app.apicache.clear('bigresponsegroup').then(function(deleteCount) {
+                  clearElapsedTime = Date.now() - then
+                  deletedKeyCount = deleteCount
+                  expect(String(initialChunk).slice(0, 5)).to.equal('aaaaa')
+                })
+              }
+              return function(chunk) {
+                if (memo) return
+                memo = run(chunk)
+              }
+            })()
+            var stream = require('stream')
+            var wstream = new stream.Writable({
+              write(chunk, _e, cb) {
+                runOnceAfterReceivingFirstChunk(chunk)
+                cb()
+              },
+            })
+
+            return resolveWhenKeyIsCached().then(function() {
+              var supertest = request(app).get('/api/bigresponse')
+              supertest
+                .expect(200)
+                .pipe(wstream)
+                .on('finish', function() {
+                  var cachedResTime = Date.now() - then
+                  expect(clearElapsedTime).to.be.below(cachedResTime)
+                  expect(deletedKeyCount).to.equal(2)
+                  expect(app.requestsProcessed).to.equal(1)
+
+                  app.apicache
+                    .getIndex()
+                    .then(function(index) {
+                      expect(index.all.length).to.equal(0)
+                      expect(Object.keys(index.groups).length).to.equal(0)
+                    })
+                    .then(function() {
+                      db.flushdb(function() {
+                        // needed because piping don't auto close server
+                        supertest._server.close()
+                        done()
                       })
-                    }, resTime / 7)
-                  }),
-                ])
-              })
-              .then(function(promiseAllReturn) {
-                var elapsedTime1 = promiseAllReturn[0][0]
-                var elapsedTime2 = promiseAllReturn[1][0]
-                expect(elapsedTime2).to.be.below(elapsedTime1)
-                return [promiseAllReturn[0][1], promiseAllReturn[1][1]]
-              })
-              .then(function(otherResAndDeleteCount) {
-                var cachedRes = otherResAndDeleteCount[0]
-                var deleteCount = otherResAndDeleteCount[1]
-                expect(cachedRes.text).to.equal(res.text)
-                expect(deleteCount).to.equal(2)
-                return app.apicache.getIndex()
-              })
-          })
-          .then(function(index) {
-            expect(app.requestsProcessed).to.equal(1)
-            expect(index.all.length).to.equal(0)
-            expect(Object.keys(index.groups).length).to.equal(0)
-          })
-          .then(function() {
-            return new Promise(function(resolve) {
-              db.flushdb(resolve)
+                    })
+                })
             })
           })
       })
@@ -1918,7 +1989,8 @@ describe('Redis support', function() {
           .then(function(res) {
             expect(res[0].text).to.equal(res[1].text)
             expect(res[0].text).to.equal('hello world')
-            expect(app.requestsProcessed).to.equal(2)
+            // this was equal 2 when there was no idempotent request feature
+            // expect(app.requestsProcessed).to.equal(2)
             return new Promise(function(resolve) {
               setTimeout(function() {
                 resolve(app.apicache.getIndex())
@@ -1931,7 +2003,8 @@ describe('Redis support', function() {
             return request(app).get('/api/slowresponse')
           })
           .then(function(res) {
-            expect(app.requestsProcessed).to.equal(2)
+            // this was equal 2 when there was no idempotent request feature
+            // expect(app.requestsProcessed).to.equal(2)
             expect(res.text).to.equal('hello world')
           })
           .then(function() {

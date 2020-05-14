@@ -1,13 +1,6 @@
 var stream = require('stream')
 var Redlock = require('redlock')
-function generateUuidV4(a, b) {
-  for (
-    b = a = '';
-    a++ < 36;
-    b += (a * 51) & 52 ? (a ^ 15 ? 8 ^ (Math.random() * (a ^ 20 ? 16 : 4)) : 4).toString(16) : '-'
-  );
-  return b
-}
+var generateUuidV4 = require('uuid').v4
 
 function RedisCache(options, debug) {
   this.redis = options.redisClient
@@ -42,6 +35,99 @@ function RedisCache(options, debug) {
 var DEFAULT_LOCK_PTTL = 30 * 1000 // 30s will be the response init limit
 RedisCache.prototype._acquireLock = function(key, pttl) {
   return this.redlock.lock('lock:' + key, pttl || DEFAULT_LOCK_PTTL)
+}
+
+var LOCK_SEPARATOR = '$api-cache$'
+var DELETE_IF_IT_WASNT_DELETED_BEFORE = `
+  if redis.call("get",KEYS[1]) == ARGV[1] then
+      return redis.call("del",KEYS[1])
+  else
+      return 0
+  end
+`
+// return true if the request with this id just acquired or was already holding the lock
+RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
+  var lockKey = 'lock-with-id:' + key
+  var lockValue = id + LOCK_SEPARATOR + (Date.now() + (pttl || DEFAULT_LOCK_PTTL))
+  var that = this
+  return new Promise(function(resolve, reject) {
+    // try acquiring lock
+    that.redis.setnx(lockKey, lockValue, function(err, res) {
+      if (err) {
+        that.debug('error in redisCache.acquireLockWithId function', err)
+        return reject(err)
+      }
+
+      if (res === 1) {
+        resolve(true)
+      } else {
+        // check if it is stale and its id
+        that.redis.get(lockKey, function(err, value) {
+          if (err) {
+            that.debug('error in redisCache.acquireLockWithId function', err)
+            return reject(err)
+          }
+
+          var isExpired
+          var holderId
+          if (value) {
+            var split = value.split(LOCK_SEPARATOR)
+            holderId = split[0]
+            var ms = split[1]
+            isExpired = parseInt(ms, 10) <= Date.now()
+          } else isExpired = true
+
+          if (!isExpired) resolve(holderId === id)
+          else {
+            // not safe using watch+multi: https://github.com/NodeRedis/node-redis/issues/1320#issuecomment-436283351
+            that.redis.eval(DELETE_IF_IT_WASNT_DELETED_BEFORE, 1, lockKey, value, function(
+              err,
+              res
+            ) {
+              if (err) {
+                that.debug('error in redisCache.acquireLockWithId function', err)
+                return reject(err)
+              }
+
+              resolve(that._acquireLockWithId(key, id, pttl))
+            })
+          }
+        })
+      }
+    })
+  })
+}
+
+var DELETE_IF_IT_IS_HELD_BY_SAME_CLIENT_ID = `
+  value = redis.call("get",KEYS[1])
+  if value == false then return 1 end
+
+  if string.sub(value, 1, string.len(ARGV[1])) == ARGV[1] then
+      return redis.call("del",KEYS[1])
+  else
+      return 0
+  end
+`
+RedisCache.prototype.releaseLockWithId = function(key, id) {
+  var that = this
+  var lockKey = 'lock-with-id:' + key
+
+  return new Promise(function(resolve) {
+    that.redis.eval(
+      DELETE_IF_IT_IS_HELD_BY_SAME_CLIENT_ID,
+      1,
+      lockKey,
+      id + LOCK_SEPARATOR,
+      function(err, res) {
+        if (err) {
+          that.debug('error in redisCache.acquireLockWithId function', err)
+          resolve(false)
+        }
+
+        resolve(res === 1)
+      }
+    )
+  })
 }
 
 var DEFAULT_HIGH_WATER_MARK = 16384
