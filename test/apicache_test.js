@@ -1261,42 +1261,35 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('clearing cache cancels expiration callback', function() {
-        var timeout = 80
-        var app = mockAPI.create(timeout)
-        var then = Date.now()
+        var timeout = 50
+        var callCount = 0
+        var cb = function() {
+          callCount++
+        }
+        var app = mockAPI.create(timeout, { events: { expire: cb } })
 
         return request(app)
           .get('/api/movies')
           .then(function(res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
-            var reqTime = Date.now() - then
-            expect(reqTime).to.be.below(timeout)
             expect(app.requestsProcessed).to.equal(1)
 
-            var otherReqTime
-            return Promise.all([
-              request(app)
-                .get('/api/movies')
-                .then(function() {
-                  expect(app.apicache.getIndex().all.length).to.equal(1)
-                  expect(app.apicache.getIndex().all).to.include('/api/movies')
-                  otherReqTime = Date.now() - then
-                  expect(otherReqTime).to.be.below(timeout)
-                  expect(app.requestsProcessed).to.equal(2)
-                }),
-              new Promise(function(resolve) {
-                setTimeout(function() {
-                  expect(app.apicache.getIndex().all.length).to.equal(1)
-                  expect(app.apicache.getIndex().all).to.include('/api/movies')
-                  var anotherReqTime = Date.now() - then
-                  expect(anotherReqTime).to.be.above(timeout)
-                  expect(anotherReqTime).to.be.above(otherReqTime)
-                  expect(anotherReqTime - otherReqTime).to.be.below(timeout)
-                  resolve()
-                }, timeout - reqTime + 1)
-              }),
-            ])
+            return request(app)
+              .get('/api/movies')
+              .then(function() {
+                expect(app.apicache.getIndex().all.length).to.equal(1)
+                expect(app.apicache.getIndex().all).to.include('/api/movies')
+                expect(app.requestsProcessed).to.equal(2)
+
+                return new Promise(function(resolve) {
+                  setTimeout(function() {
+                    expect(app.apicache.getIndex().all.length).to.equal(0)
+                    expect(callCount).to.equal(1)
+                    resolve()
+                  }, timeout * 1.5)
+                })
+              })
           })
       })
 
