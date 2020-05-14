@@ -276,6 +276,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 3600000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
@@ -290,6 +291,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 3600000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
@@ -308,6 +310,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
       var middleware1 = apicache.middleware('10 seconds', null, {
         debug: true,
+        isBypassable: false,
         defaultDuration: 7200000,
         appendKey: ['bar'],
         statusCodes: { include: [], exclude: ['400'] },
@@ -327,6 +330,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: true,
         defaultDuration: 7200000,
         enabled: true,
+        isBypassable: false,
         appendKey: ['bar'],
         jsonp: false,
         redisClient: false,
@@ -343,6 +347,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -376,6 +381,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 7200000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -390,6 +396,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -432,6 +439,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -448,6 +456,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: true,
         defaultDuration: 450000,
         enabled: false,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -564,6 +573,28 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it('skips cache when using header "cache-control: no-store"', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('cache-control', 'no-store')
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(res.headers['apicache-store']).to.be.undefined
+                expect(res.headers['apicache-version']).to.be.undefined
+                expect(app.requestsProcessed).to.equal(2)
+              })
+          })
+      })
+
       it('skips cache when using header "x-apicache-bypass"', function() {
         var app = mockAPI.create('10 seconds')
 
@@ -604,6 +635,72 @@ describe('.middleware {MIDDLEWARE}', function() {
                 expect(res.headers['apicache-store']).to.be.undefined
                 expect(res.headers['apicache-version']).to.be.undefined
                 expect(app.requestsProcessed).to.equal(2)
+              })
+          })
+      })
+
+      it('prevent cache skipping when using header "cache-control: no-store" with isBypassable "false"', function() {
+        var app = mockAPI.create('10 seconds', { isBypassable: false })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('cache-control', 'no-store')
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
+      })
+
+      it('prevent cache skipping when using header "x-apicache-bypass (legacy)" with isBypassable "false"', function() {
+        var app = mockAPI.create('10 seconds', { isBypassable: false })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('x-apicache-bypass', true)
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
+      })
+
+      it('prevent cache skipping when using header "x-apicache-force-fetch (legacy)" with isBypassable "false"', function() {
+        var app = mockAPI.create('10 seconds', { isBypassable: false })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('x-apicache-force-fetch', true)
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(app.requestsProcessed).to.equal(1)
               })
           })
       })

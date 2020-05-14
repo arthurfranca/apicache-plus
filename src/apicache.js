@@ -50,6 +50,7 @@ function ApiCache() {
     debug: false,
     defaultDuration: 3600000,
     enabled: true,
+    isBypassable: true,
     appendKey: [],
     jsonp: false,
     redisClient: false,
@@ -860,7 +861,14 @@ function ApiCache() {
 
       // initial bypass chances
       if (!opt.enabled) return bypass()
-      if (req.headers['x-apicache-bypass'] || req.headers['x-apicache-force-fetch']) return bypass()
+      if (
+        opt.isBypassable &&
+        (req.headers['cache-control'] === 'no-store' ||
+          ['1', 'true'].indexOf(req.headers['x-apicache-bypass']) !== -1 ||
+          ['1', 'true'].indexOf(req.headers['x-apicache-force-fetch']) !== -1)
+      ) {
+        return bypass()
+      }
 
       // REMOVED IN 0.11.1 TO CORRECT MIDDLEWARE TOGGLE EXECUTE ORDER
       // if (typeof middlewareToggle === 'function') {
