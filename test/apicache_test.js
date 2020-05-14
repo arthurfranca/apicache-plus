@@ -285,6 +285,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
@@ -300,6 +301,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -308,6 +310,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       apicache.options({
         appendKey: ['test'],
       })
+      function afterHit() {}
       var middleware1 = apicache.middleware('10 seconds', null, {
         debug: true,
         isBypassable: false,
@@ -318,6 +321,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        afterHit: afterHit,
       })
       var middleware2 = apicache.middleware('20 seconds', null, {
         debug: false,
@@ -341,6 +345,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        afterHit: afterHit,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
@@ -356,6 +361,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -390,6 +396,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['400'] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
@@ -405,6 +412,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -450,6 +458,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        afterHit: null,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
@@ -465,6 +474,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -1237,6 +1247,29 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(callbackResponse).to.equal('/api/movies')
           done()
         }, 25)
+      })
+
+      it('run provided function after cache hit', function(done) {
+        function afterHit(req, res) {
+          expect(req.headers['request-after-hit']).to.equal('1')
+          expect((res.getHeaders ? res.getHeaders() : res._headers)['response-after-hit']).to.equal(
+            '1'
+          )
+          done()
+        }
+        var app = mockAPI.create('2 seconds', { afterHit: afterHit })
+        request(app)
+          .get('/api/afterhit')
+          .expect(200, 'after hit')
+          .end(function(_err, res) {
+            request(this.app)
+              .get('/api/afterhit')
+              .set('Request-After-Hit', '1')
+              .expect(200, 'after hit')
+              .end(function(_err, res) {
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
       })
 
       describe('can attach many apicache middlewares to same route', function() {

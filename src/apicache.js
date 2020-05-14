@@ -66,6 +66,7 @@ function ApiCache() {
     headers: {
       // 'cache-control':  'no-cache' // example of header overwrite
     },
+    afterHit: null,
     trackPerformance: false,
   }
 
@@ -398,9 +399,15 @@ function ApiCache() {
 
   var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
   var CACHE_CONTROL_NO_CACHE_REGEXP = /(?:^|,)\s*?no-cache\s*?(?:,|$)/
-  function sendCachedResponse(request, response, cacheObject, toggle, next, duration) {
+  function sendCachedResponse(request, response, cacheObject, toggle, next, duration, options) {
     if (toggle && !toggle(request, response)) {
       return next()
+    }
+
+    if (options.afterHit) {
+      response.on('finish', function() {
+        options.afterHit(request, response)
+      })
     }
 
     var elapsed = new Date() - request.apicacheTimer
@@ -959,7 +966,7 @@ function ApiCache() {
             if (cached) {
               perf.hit(key)
               try {
-                return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
+                return sendCachedResponse(req, res, cached, middlewareToggle, next, duration, opt)
               } catch (err) {
                 debug(err)
                 if (res.headersSent) {

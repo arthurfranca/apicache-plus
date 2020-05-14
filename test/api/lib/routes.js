@@ -140,5 +140,13 @@ module.exports = function(app) {
     res.end()
   })
 
+  app.get('/api/afterhit', function(req, res) {
+    app.requestsProcessed++
+
+    res.writeHead(200, { 'Response-After-Hit': '1' })
+    res.write('after hit')
+    res.end()
+  })
+
   return app
 }

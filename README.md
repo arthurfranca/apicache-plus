@@ -163,7 +163,8 @@ let cache5min = cache('5 min') // continue to use normally
   trackPerformance: false,          // enable/disable performance tracking... WARNING: super cool feature, but may cause memory overhead issues
   headers: {
     // 'cache-control':  'no-cache' // example of header overwrite
-  }
+  },
+  afterHit:         fn(req, res),   // run function after cache hits
 }
 ```
 
@@ -253,7 +254,7 @@ The presence of this header value will bypass the cache, ensuring you aren't loo
 
 ### Changelog
 
-- **v1.8.0** - add isBypassable option
+- **v1.8.0** - add isBypassable and afterHit options
 - **v1.7.0** - enforce request idempotence by cache key when not cached yet
 - **v1.6.0** - cache is always stored compressed, can attach multiple apicache middlewares to same route for conditional use, increase third-party compression middleware compatibility and some minor bugfixes
 - **v1.5.5** - self package import fix (thanks [@robbinjanssen](https://github.com/robbinjanssen))
