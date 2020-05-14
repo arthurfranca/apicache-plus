@@ -6,6 +6,7 @@
 [![node version support](https://img.shields.io/node/v/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
 [![Build Status via Travis CI](https://travis-ci.org/arthurfranca/apicache-plus.svg?branch=master)](https://travis-ci.org/arthurfranca/apicache-plus)
 [![Coverage Status](https://coveralls.io/repos/github/arthurfranca/apicache-plus/badge.svg?branch=master)](https://coveralls.io/github/arthurfranca/apicache-plus?branch=master)
+[![Known Vulnerabilities](https://snyk.io/test/github/arthurfranca/apicache-plus/badge.svg?targetFile=package.json)](https://snyk.io/test/github/arthurfranca/apicache-plus?targetFile=package.json)
 [![NPM downloads](https://img.shields.io/npm/dt/apicache-plus.svg?style=flat)](https://www.npmjs.com/package/apicache-plus)
 
 ## Why?
