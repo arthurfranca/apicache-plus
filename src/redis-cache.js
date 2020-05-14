@@ -50,12 +50,12 @@ RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
   var lockKey = 'lock-with-id:' + key
   var lockValue = id + LOCK_SEPARATOR + (Date.now() + (pttl || DEFAULT_LOCK_PTTL))
   var that = this
-  return new Promise(function(resolve) {
+  return new Promise(function(resolve, reject) {
     // try acquiring lock
     that.redis.setnx(lockKey, lockValue, function(err, res) {
       if (err) {
-        if (err) that.debug('error in redisCache.acquireLockWithId function', err)
-        return resolve(false)
+        that.debug('error in redisCache.acquireLockWithId function', err)
+        return reject(err)
       }
 
       if (res === 1) {
@@ -64,8 +64,8 @@ RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
         // check if it is stale and its id
         that.redis.get(lockKey, function(err, value) {
           if (err) {
-            if (err) that.debug('error in redisCache.acquireLockWithId function', err)
-            return resolve(false)
+            that.debug('error in redisCache.acquireLockWithId function', err)
+            return reject(err)
           }
 
           var isExpired
@@ -73,8 +73,8 @@ RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
           if (value) {
             var split = value.split(LOCK_SEPARATOR)
             holderId = split[0]
-            var ts = split[1]
-            isExpired = parseInt(ts, 10) <= Date.now()
+            var ms = split[1]
+            isExpired = parseInt(ms, 10) <= Date.now()
           } else isExpired = true
 
           if (!isExpired) resolve(holderId === id)
@@ -84,7 +84,11 @@ RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
               err,
               res
             ) {
-              if (err) that.debug('error in redisCache.acquireLockWithId function', err)
+              if (err) {
+                that.debug('error in redisCache.acquireLockWithId function', err)
+                return reject(err)
+              }
+
               resolve(that._acquireLockWithId(key, id, pttl))
             })
           }
@@ -116,9 +120,10 @@ RedisCache.prototype.releaseLockWithId = function(key, id) {
       id + LOCK_SEPARATOR,
       function(err, res) {
         if (err) {
-          if (err) that.debug('error in redisCache.acquireLockWithId function', err)
-          resolve()
+          that.debug('error in redisCache.acquireLockWithId function', err)
+          resolve(false)
         }
+
         resolve(res === 1)
       }
     )
