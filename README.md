@@ -252,6 +252,7 @@ The presence of this header flag will bypass the cache, ensuring you aren't look
 
 ### Changelog
 
+- **v1.7.0** - enforce request idempotence by cache key when not cached yet
 - **v1.6.0** - cache is always stored compressed, can attach multiple apicache middlewares to same route for conditional use, increase third-party compression middleware compatibility and some minor bugfixes
 - **v1.5.5** - self package import fix (thanks [@robbinjanssen](https://github.com/robbinjanssen))
 - **v1.5.4** - created apicache-plus from apicache v1.5.3 with backward compatibility (thanks [@kwhitley](https://github.com/kwhitley) and [all original library contributors](https://github.com/kwhitley/apicache#contributors))
