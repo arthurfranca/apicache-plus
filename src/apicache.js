@@ -8,6 +8,8 @@ var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
 var pkg = require('../package.json')
 
+var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
+
 var t = {
   ms: 1,
   second: 1000,
@@ -212,6 +214,10 @@ function ApiCache() {
     })
   }
 
+  function isNumeric(n) {
+    return !isNaN(parseFloat(n)) && isFinite(n)
+  }
+
   function makeResponseCacheable(
     req,
     res,
@@ -253,7 +259,10 @@ function ApiCache() {
 
       // add cache control headers
       if (!options.headers['cache-control']) {
-        if (shouldCacheRes(req, res, toggle, options)) {
+        if (
+          SAFE_HTTP_METHODS.indexOf(req.method) !== -1 &&
+          shouldCacheRes(req, res, toggle, options)
+        ) {
           res.setHeader(
             'cache-control',
             'max-age=' + (duration / 1000).toFixed(0) + ', must-revalidate'
@@ -345,7 +354,7 @@ function ApiCache() {
           if (isRestifyGzipMiddlewareAttached) {
             // the middleware will always preset content-encoding to gzip even if
             // apicache is about to receive raw response stream (middleware attached before apicache)
-            if (Number.isInteger((res._currentResponseHeaders || {})['content-length'])) {
+            if (isNumeric((res._currentResponseHeaders || {})['content-length'])) {
               delete res._currentResponseHeaders['content-encoding']
             }
 
@@ -429,7 +438,10 @@ function ApiCache() {
     Object.assign(headers, filterBlacklistedHeaders(cacheObjectHeaders), {
       // set properly-decremented max-age header.  This ensures that max-age is in sync with the cache expiration.
       'cache-control': (
-        cacheObjectHeaders['cache-control'] || 'max-age=' + updatedMaxAge + ', must-revalidate'
+        cacheObjectHeaders['cache-control'] ||
+        (SAFE_HTTP_METHODS.indexOf(request.method) !== -1
+          ? 'max-age=' + updatedMaxAge + ', must-revalidate'
+          : 'no-store')
       ).replace(/max-age=\s*([+-]?\d+)/, function(_match, cachedMaxAge) {
         return 'max-age=' + Math.max(0, Math.min(parseInt(cachedMaxAge, 10), updatedMaxAge))
       }),

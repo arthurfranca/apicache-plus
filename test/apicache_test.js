@@ -534,6 +534,39 @@ describe('.middleware {MIDDLEWARE}', function() {
             }, 500)
           })
       })
+      ;['post', 'put', 'patch', api.name.indexOf('restify') !== -1 ? 'del' : 'delete'].forEach(
+        function(method) {
+          describe(`when ${method.toUpperCase()}`, function() {
+            before(function() {
+              var that = this
+              this.app = mockAPI.create('10 seconds')
+              this.app[method]('/api/nongethead', function(req, res) {
+                that.app.requestsProcessed++
+
+                res.write('non get nor head')
+                res.end()
+              })
+            })
+
+            it('returns no-store header', function() {
+              var that = this
+              return request(this.app)
+                [method]('/api/nongethead')
+                .expect(200, 'non get nor head')
+                .expect('Cache-Control', 'no-store')
+                .then(function(res) {
+                  return request(that.app)
+                    [method]('/api/nongethead')
+                    .expect(200, 'non get nor head')
+                    .expect('Cache-Control', 'no-store')
+                    .then(function() {
+                      expect(that.app.requestsProcessed).to.equal(1)
+                    })
+                })
+            })
+          })
+        }
+      )
 
       it('returns decremented max-age header when overwritten one is higher than cache duration', function(done) {
         var app = mockAPI.create('10 seconds', { headers: { 'cache-control': 'max-age=15' } })
