@@ -276,6 +276,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 3600000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
@@ -284,12 +285,14 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
         defaultDuration: 3600000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
@@ -298,6 +301,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -306,8 +310,10 @@ describe('.middleware {MIDDLEWARE}', function() {
       apicache.options({
         appendKey: ['test'],
       })
+      function afterHit() {}
       var middleware1 = apicache.middleware('10 seconds', null, {
         debug: true,
+        isBypassable: false,
         defaultDuration: 7200000,
         appendKey: ['bar'],
         statusCodes: { include: [], exclude: ['400'] },
@@ -315,6 +321,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        afterHit: afterHit,
       })
       var middleware2 = apicache.middleware('20 seconds', null, {
         debug: false,
@@ -327,6 +334,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: true,
         defaultDuration: 7200000,
         enabled: true,
+        isBypassable: false,
         appendKey: ['bar'],
         jsonp: false,
         redisClient: false,
@@ -337,12 +345,14 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        afterHit: afterHit,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -351,6 +361,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -376,6 +387,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 7200000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -384,12 +396,14 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['400'] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -398,6 +412,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -432,6 +447,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -442,12 +458,14 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        afterHit: null,
         trackPerformance: false,
       })
       expect(middleware2.options()).to.eql({
         debug: true,
         defaultDuration: 450000,
         enabled: false,
+        isBypassable: true,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -456,6 +474,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        afterHit: null,
         trackPerformance: false,
       })
     })
@@ -564,6 +583,28 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it('skips cache when using header "cache-control: no-store"', function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('cache-control', 'no-store')
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(res.headers['apicache-store']).to.be.undefined
+                expect(res.headers['apicache-version']).to.be.undefined
+                expect(app.requestsProcessed).to.equal(2)
+              })
+          })
+      })
+
       it('skips cache when using header "x-apicache-bypass"', function() {
         var app = mockAPI.create('10 seconds')
 
@@ -604,6 +645,72 @@ describe('.middleware {MIDDLEWARE}', function() {
                 expect(res.headers['apicache-store']).to.be.undefined
                 expect(res.headers['apicache-version']).to.be.undefined
                 expect(app.requestsProcessed).to.equal(2)
+              })
+          })
+      })
+
+      it('prevent cache skipping when using header "cache-control: no-store" with isBypassable "false"', function() {
+        var app = mockAPI.create('10 seconds', { isBypassable: false })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('cache-control', 'no-store')
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
+      })
+
+      it('prevent cache skipping when using header "x-apicache-bypass (legacy)" with isBypassable "false"', function() {
+        var app = mockAPI.create('10 seconds', { isBypassable: false })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('x-apicache-bypass', true)
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
+      })
+
+      it('prevent cache skipping when using header "x-apicache-force-fetch (legacy)" with isBypassable "false"', function() {
+        var app = mockAPI.create('10 seconds', { isBypassable: false })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .set('x-apicache-force-fetch', true)
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect('apicache-store', 'memory')
+              .expect('apicache-version', pkg.version)
+              .expect(200, movies)
+              .then(function(res) {
+                expect(app.requestsProcessed).to.equal(1)
               })
           })
       })
@@ -898,6 +1005,30 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it("don't send 304 if set if-match header", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers['last-modified']).to.be.undefined
+            return res.headers.etag
+          })
+          .then(function(etag) {
+            return request(app)
+              .get('/api/movies')
+              .set('if-none-match', etag)
+              .set('if-match', 'a-strong-etag')
+              .expect(200, movies)
+              .expect('etag', etag)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
       it("don't send 304 if set if-unmodified-since header", function() {
         var app = mockAPI.create('10 seconds')
 
@@ -914,6 +1045,54 @@ describe('.middleware {MIDDLEWARE}', function() {
               .get('/api/ifmodifiedsince')
               .set('if-unmodified-since', new Date().toUTCString())
               .set('if-modified-since', lastModified)
+              .expect(200, 'hi')
+              .expect('last-modified', lastModified)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it("don't send 304 if set if-range header with an etag", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            expect(res.headers['last-modified']).to.be.undefined
+            return res.headers.etag
+          })
+          .then(function(etag) {
+            return request(app)
+              .get('/api/movies')
+              .set('if-none-match', etag)
+              .set('if-range', 'a-strong-etag')
+              .expect(200, movies)
+              .expect('etag', etag)
+          })
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+          })
+      })
+
+      it("don't send 304 if set if-range header with a date", function() {
+        var app = mockAPI.create('10 seconds')
+
+        return request(app)
+          .get('/api/ifmodifiedsince')
+          .expect(200, 'hi')
+          .then(function(res) {
+            expect(app.requestsProcessed).to.equal(1)
+            return res.headers['last-modified']
+          })
+          .then(function(lastModified) {
+            var date = new Date().toUTCString()
+            return request(app)
+              .get('/api/ifmodifiedsince')
+              .set('if-unmodified-since', date)
+              .set('if-range', 'a-strong-etag', date)
               .expect(200, 'hi')
               .expect('last-modified', lastModified)
           })
@@ -1082,42 +1261,35 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('clearing cache cancels expiration callback', function() {
-        var timeout = 80
-        var app = mockAPI.create(timeout)
-        var then = Date.now()
+        var timeout = 50
+        var callCount = 0
+        var cb = function() {
+          callCount++
+        }
+        var app = mockAPI.create(timeout, { events: { expire: cb } })
 
         return request(app)
           .get('/api/movies')
           .then(function(res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
-            var reqTime = Date.now() - then
-            expect(reqTime).to.be.below(timeout)
             expect(app.requestsProcessed).to.equal(1)
 
-            var otherReqTime
-            return Promise.all([
-              request(app)
-                .get('/api/movies')
-                .then(function() {
-                  expect(app.apicache.getIndex().all.length).to.equal(1)
-                  expect(app.apicache.getIndex().all).to.include('/api/movies')
-                  otherReqTime = Date.now() - then
-                  expect(otherReqTime).to.be.below(timeout)
-                  expect(app.requestsProcessed).to.equal(2)
-                }),
-              new Promise(function(resolve) {
-                setTimeout(function() {
-                  expect(app.apicache.getIndex().all.length).to.equal(1)
-                  expect(app.apicache.getIndex().all).to.include('/api/movies')
-                  var anotherReqTime = Date.now() - then
-                  expect(anotherReqTime).to.be.above(timeout)
-                  expect(anotherReqTime).to.be.above(otherReqTime)
-                  expect(anotherReqTime - otherReqTime).to.be.below(timeout)
-                  resolve()
-                }, timeout - reqTime + 1)
-              }),
-            ])
+            return request(app)
+              .get('/api/movies')
+              .then(function() {
+                expect(app.apicache.getIndex().all.length).to.equal(1)
+                expect(app.apicache.getIndex().all).to.include('/api/movies')
+                expect(app.requestsProcessed).to.equal(2)
+
+                return new Promise(function(resolve) {
+                  setTimeout(function() {
+                    expect(app.apicache.getIndex().all.length).to.equal(0)
+                    expect(callCount).to.equal(1)
+                    resolve()
+                  }, timeout * 1.5)
+                })
+              })
           })
       })
 
@@ -1140,6 +1312,29 @@ describe('.middleware {MIDDLEWARE}', function() {
           expect(callbackResponse).to.equal('/api/movies')
           done()
         }, 25)
+      })
+
+      it('run provided function after cache hit', function(done) {
+        function afterHit(req, res) {
+          expect(req.headers['request-after-hit']).to.equal('1')
+          expect((res.getHeaders ? res.getHeaders() : res._headers)['response-after-hit']).to.equal(
+            '1'
+          )
+          done()
+        }
+        var app = mockAPI.create('2 seconds', { afterHit: afterHit })
+        request(app)
+          .get('/api/afterhit')
+          .expect(200, 'after hit')
+          .end(function(_err, res) {
+            request(this.app)
+              .get('/api/afterhit')
+              .set('Request-After-Hit', '1')
+              .expect(200, 'after hit')
+              .end(function(_err, res) {
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
       })
 
       describe('can attach many apicache middlewares to same route', function() {

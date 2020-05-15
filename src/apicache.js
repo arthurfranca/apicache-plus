@@ -50,6 +50,7 @@ function ApiCache() {
     debug: false,
     defaultDuration: 3600000,
     enabled: true,
+    isBypassable: true,
     appendKey: [],
     jsonp: false,
     redisClient: false,
@@ -65,6 +66,7 @@ function ApiCache() {
     headers: {
       // 'cache-control':  'no-cache' // example of header overwrite
     },
+    afterHit: null,
     trackPerformance: false,
   }
 
@@ -397,9 +399,15 @@ function ApiCache() {
 
   var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
   var CACHE_CONTROL_NO_CACHE_REGEXP = /(?:^|,)\s*?no-cache\s*?(?:,|$)/
-  function sendCachedResponse(request, response, cacheObject, toggle, next, duration) {
+  function sendCachedResponse(request, response, cacheObject, toggle, next, duration, options) {
     if (toggle && !toggle(request, response)) {
       return next()
+    }
+
+    if (options.afterHit) {
+      response.on('finish', function() {
+        options.afterHit(request, response)
+      })
     }
 
     var elapsed = new Date() - request.apicacheTimer
@@ -435,14 +443,21 @@ function ApiCache() {
       })
     }
 
-    var clientDoesntWantToReloadItsCache = function() {
+    function hasNoBodyRequestingPreconditionCheck() {
+      return (
+        !request.headers['if-match'] &&
+        !request.headers['if-unmodified-since'] &&
+        !request.headers['if-range']
+      )
+    }
+    function clientDoesntWantToReloadItsCache() {
       return (
         !request.headers['cache-control'] ||
         !CACHE_CONTROL_NO_CACHE_REGEXP.test(request.headers['cache-control'])
       )
     }
     // test Etag against If-None-Match for 304
-    var isEtagFresh = function() {
+    function isEtagFresh() {
       var cachedEtag = cacheObjectHeaders.etag
       var requestEtags = (request.headers['if-none-match'] || '').replace('*', '').split(/\s*,\s*/)
       return Boolean(
@@ -457,7 +472,7 @@ function ApiCache() {
               .indexOf(cachedEtag) !== -1)
       )
     }
-    var isResourceFresh = function() {
+    function isResourceFresh() {
       var cachedLastModified = cacheObjectHeaders['last-modified']
       var requestModifiedSince = request.headers['if-modified-since']
       if (!cachedLastModified || !requestModifiedSince) return false
@@ -469,7 +484,7 @@ function ApiCache() {
       }
     }
     if (
-      !request.headers['if-unmodified-since'] &&
+      hasNoBodyRequestingPreconditionCheck() &&
       clientDoesntWantToReloadItsCache() &&
       (isEtagFresh() || isResourceFresh())
     ) {
@@ -484,7 +499,7 @@ function ApiCache() {
       return response.end()
     }
 
-    var getRstream = function() {
+    function getRstream() {
       return (redisCache || memCache)
         .createReadStream(
           cacheObject.key,
@@ -860,7 +875,14 @@ function ApiCache() {
 
       // initial bypass chances
       if (!opt.enabled) return bypass()
-      if (req.headers['x-apicache-bypass'] || req.headers['x-apicache-force-fetch']) return bypass()
+      if (
+        opt.isBypassable &&
+        (req.headers['cache-control'] === 'no-store' ||
+          ['1', 'true'].indexOf(req.headers['x-apicache-bypass']) !== -1 ||
+          ['1', 'true'].indexOf(req.headers['x-apicache-force-fetch']) !== -1)
+      ) {
+        return bypass()
+      }
 
       // REMOVED IN 0.11.1 TO CORRECT MIDDLEWARE TOGGLE EXECUTE ORDER
       // if (typeof middlewareToggle === 'function') {
@@ -951,7 +973,7 @@ function ApiCache() {
             if (cached) {
               perf.hit(key)
               try {
-                return sendCachedResponse(req, res, cached, middlewareToggle, next, duration)
+                return sendCachedResponse(req, res, cached, middlewareToggle, next, duration, opt)
               } catch (err) {
                 debug(err)
                 if (res.headersSent) {

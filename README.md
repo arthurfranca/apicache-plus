@@ -6,6 +6,7 @@
 [![node version support](https://img.shields.io/node/v/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
 [![Build Status via Travis CI](https://travis-ci.org/arthurfranca/apicache-plus.svg?branch=master)](https://travis-ci.org/arthurfranca/apicache-plus)
 [![Coverage Status](https://coveralls.io/repos/github/arthurfranca/apicache-plus/badge.svg?branch=master)](https://coveralls.io/github/arthurfranca/apicache-plus?branch=master)
+[![Known Vulnerabilities](https://snyk.io/test/github/arthurfranca/apicache-plus/badge.svg?targetFile=package.json)](https://snyk.io/test/github/arthurfranca/apicache-plus?targetFile=package.json)
 [![NPM downloads](https://img.shields.io/npm/dt/apicache-plus.svg?style=flat)](https://www.npmjs.com/package/apicache-plus)
 
 ## Why?
@@ -152,6 +153,7 @@ let cache5min = cache('5 min') // continue to use normally
   debug:            false|true,     // if true, enables console output
   defaultDuration:  '1 hour',       // should be either a number (in ms) or a string, defaults to 1 hour
   enabled:          true|false,     // if false, turns off caching globally (useful on dev)
+  isBypassable:     true|false,     // if true, bypasses cache by requesting with Cache-Control: no-store header
   redisClient:      client,         // if provided, uses the [node-redis](https://github.com/NodeRedis/node_redis) client instead of [memory-cache](https://github.com/ptarjan/node-cache)
   appendKey:        fn(req, res),   // appendKey takes the req/res objects and returns a custom value to extend the cache key
   headerBlacklist:  [],             // list of headers that should never be cached
@@ -162,7 +164,8 @@ let cache5min = cache('5 min') // continue to use normally
   trackPerformance: false,          // enable/disable performance tracking... WARNING: super cool feature, but may cause memory overhead issues
   headers: {
     // 'cache-control':  'no-cache' // example of header overwrite
-  }
+  },
+  afterHit:         fn(req, res),   // run function after cache hits
 }
 ```
 
@@ -247,11 +250,12 @@ apicache.options({ debug: true })
 
 When sharing `GET` routes between admin and public sites, you'll likely want the
 routes to be cached from your public client, but NOT cached when from the admin client. This
-is achieved by sending a `"x-apicache-bypass": true` header along with the requst from the admin.
-The presence of this header flag will bypass the cache, ensuring you aren't looking at stale data.
+is achieved by sending a `Cache-Control: no-store` header along with the request from the admin.
+The presence of this header value will bypass the cache, ensuring you aren't looking at stale data.
 
 ### Changelog
 
+- **v1.8.0** - add isBypassable and afterHit options and extra 304 condition checks
 - **v1.7.0** - enforce request idempotence by cache key when not cached yet
 - **v1.6.0** - cache is always stored compressed, can attach multiple apicache middlewares to same route for conditional use, increase third-party compression middleware compatibility and some minor bugfixes
 - **v1.5.5** - self package import fix (thanks [@robbinjanssen](https://github.com/robbinjanssen))
