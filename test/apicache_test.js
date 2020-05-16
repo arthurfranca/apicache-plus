@@ -616,6 +616,21 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it('return a low max-age when apicacheGroup is set', function() {
+        var app = mockAPI.create('2 seconds')
+
+        return request(app)
+          .get('/api/testcachegroup')
+          .expect('Cache-Control', 'max-age=3, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/testcachegroup')
+              .expect('Cache-Control', 'max-age=1, must-revalidate')
+          })
+      })
+
       it('skips cache when using header "cache-control: no-store"', function() {
         var app = mockAPI.create('10 seconds')
 

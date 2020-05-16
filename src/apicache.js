@@ -291,7 +291,9 @@ function ApiCache() {
         ) {
           res.setHeader(
             'cache-control',
-            'max-age=' + (duration / 1000).toFixed(0) + ', must-revalidate'
+            'max-age=' +
+              (req.apicacheGroup ? 3 : (duration / 1000).toFixed(0)) +
+              ', must-revalidate'
           )
         } else {
           res.setHeader('cache-control', 'no-store')
