@@ -1191,6 +1191,47 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it('cache a request when status code found in default status code inclusions', function() {
+        var app = mockAPI.create('2 seconds')
+
+        return request(app)
+          .get('/api/missing')
+          .set('Status-Code', 200)
+          .expect(200)
+          .expect('Cache-Control', /max-age/)
+          .then(function(res) {
+            expect(app.apicache.getIndex().all.length).to.equal(1)
+          })
+      })
+
+      it('does not cache a request when status code not found in default status code inclusions', function() {
+        var app = mockAPI.create('2 seconds')
+
+        return request(app)
+          .get('/api/missing')
+          .set('Status-Code', 206)
+          .expect(206)
+          .then(function(res) {
+            expect(res.headers['cache-control']).to.equal('no-store')
+            expect(app.apicache.getIndex().all.length).to.equal(0)
+          })
+      })
+
+      it('cache a request when status code not found in status code exclusions', function() {
+        var app = mockAPI.create('2 seconds', {
+          statusCodes: { exclude: [404] },
+        })
+
+        return request(app)
+          .get('/api/missing')
+          .set('Status-Code', 501)
+          .expect(501)
+          .expect('Cache-Control', /max-age/)
+          .then(function(res) {
+            expect(app.apicache.getIndex().all.length).to.equal(1)
+          })
+      })
+
       it('does not cache a request when status code found in status code exclusions', function() {
         var app = mockAPI.create('2 seconds', {
           statusCodes: { exclude: [404] },
@@ -1202,6 +1243,21 @@ describe('.middleware {MIDDLEWARE}', function() {
           .then(function(res) {
             expect(res.headers['cache-control']).to.equal('no-store')
             expect(app.apicache.getIndex().all.length).to.equal(0)
+          })
+      })
+
+      it('cache a request when status code found in status code inclusions', function() {
+        var app = mockAPI.create('2 seconds', {
+          statusCodes: { include: [206] },
+        })
+
+        return request(app)
+          .get('/api/missing')
+          .set('Status-Code', 206)
+          .expect(206)
+          .expect('Cache-Control', /max-age/)
+          .then(function(res) {
+            expect(app.apicache.getIndex().all.length).to.equal(1)
           })
       })
 

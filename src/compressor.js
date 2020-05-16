@@ -4,7 +4,7 @@ var compressible = require('compressible')
 var zlib = require('zlib')
 var stream = require('stream')
 var THRESHOLD = 1024
-var NO_CONTENT_AND_NOT_MODIFIED_STATUS_CODES = [204, 304]
+var NO_MESSAGE_BODY_STATUS_CODES = [204, 205, 304]
 var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
 var MIN_CHUNK_SIZE = 64
 var DEFAULT_HIGH_WATER_MARK = 16384
@@ -22,7 +22,7 @@ Compressor.run = function(options, debug) {
 Compressor.prototype.clientDoesntWantContent = function() {
   return (
     this.requestMehod === 'HEAD' ||
-    NO_CONTENT_AND_NOT_MODIFIED_STATUS_CODES.indexOf(this.responseStatusCode) !== -1
+    NO_MESSAGE_BODY_STATUS_CODES.indexOf(this.responseStatusCode) !== -1
   )
 }
 

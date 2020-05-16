@@ -9,6 +9,19 @@ var Compressor = require('./compressor')
 var pkg = require('../package.json')
 
 var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
+var CACHEABLE_STATUS_CODES = {
+  200: null,
+  201: null,
+  202: null,
+  203: null,
+  204: null,
+  205: null,
+  300: null,
+  301: null,
+  302: null,
+  305: null,
+  307: null,
+}
 
 var t = {
   ms: 1,
@@ -99,14 +112,27 @@ function ApiCache() {
     if (!response) return false
     var codes = (options || globalOptions).statusCodes
 
-    if (response.statusCode === 304 || (toggle && !toggle(request, response))) {
+    if (toggle && !toggle(request, response)) {
       return false
     }
 
-    if (codes.exclude && codes.exclude.length && codes.exclude.indexOf(response.statusCode) !== -1)
+    if ((!codes.exclude || !codes.exclude.length) && (!codes.include || !codes.include.length)) {
+      return response.statusCode in CACHEABLE_STATUS_CODES
+    }
+    if (
+      codes.exclude &&
+      codes.exclude.length &&
+      codes.exclude.indexOf(response.statusCode) !== -1
+    ) {
       return false
-    if (codes.include && codes.include.length && codes.include.indexOf(response.statusCode) === -1)
+    }
+    if (
+      codes.include &&
+      codes.include.length &&
+      codes.include.indexOf(response.statusCode) === -1
+    ) {
       return false
+    }
 
     return true
   }
