@@ -19,6 +19,47 @@ Compressor.run = function(options, debug) {
   return new Compressor(options, debug).run()
 }
 
+Compressor.isReallyCompressed = function(chunk, contentEncoding) {
+  if (!chunk) return false
+  contentEncoding = this.getFirstContentEncoding(contentEncoding)
+  if (!this.isCompressed(contentEncoding)) return false
+
+  var decoder
+  var options
+  switch (contentEncoding) {
+    case 'br': {
+      if (!zlib.brotliDecompressSync) return true
+      decoder = zlib.brotliDecompressSync
+      options = { finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH }
+      break
+    }
+    case 'gzip':
+    case 'deflate': {
+      decoder = zlib.unzipSync
+      options = { finishFlush: (zlib.constants && zlib.constants.Z_SYNC_FLUSH) || 2 }
+      break
+    }
+    default:
+      return true
+  }
+
+  try {
+    var slice = chunk.slice(0, MIN_CHUNK_SIZE)
+    decoder(slice, options)
+    return true
+  } catch (err) {
+    return false
+  }
+}
+
+Compressor.isCompressed = function(contentEncoding) {
+  return (contentEncoding || 'identity') !== 'identity'
+}
+
+Compressor.getFirstContentEncoding = function(contentEncoding) {
+  return (contentEncoding || 'identity').split(',')[0].trim()
+}
+
 Compressor.prototype.clientDoesntWantContent = function() {
   return (
     this.requestMehod === 'HEAD' ||
@@ -27,7 +68,9 @@ Compressor.prototype.clientDoesntWantContent = function() {
 }
 
 Compressor.prototype.isAlreadyCompressed = function() {
-  return (this.responseHeaders['content-encoding'] || 'identity') !== 'identity'
+  return Compressor.isCompressed(
+    Compressor.getFirstContentEncoding(this.responseHeaders['content-encoding'])
+  )
 }
 
 Compressor.prototype.isContentLengthBellowThreshold = function() {

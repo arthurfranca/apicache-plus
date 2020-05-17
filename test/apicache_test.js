@@ -1,6 +1,7 @@
 /* eslint-disable no-unused-expressions */
 var chai = require('chai')
 var expect = chai.expect
+var express = require('express')
 var request = require('supertest')
 var pkg = require('../package.json')
 var movies = require('./api/lib/data.json')
@@ -48,11 +49,17 @@ function assertNumRequestsProcessed(app, n) {
   }
 }
 
+var _setTimeout = global.setTimeout
+var timeouts = []
+global.setTimeout = function() {
+  var timeout = _setTimeout.apply(null, arguments)
+  timeouts.push(timeout)
+  return timeout
+}
+
 function clearAllTimeouts(cb) {
-  var id = setTimeout(function() {
-    while (id--) clearTimeout(id)
-    cb()
-  }, 0)
+  while (timeouts.length) clearTimeout(timeouts.pop())
+  cb()
 }
 
 afterEach(function(done) {
@@ -476,6 +483,115 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {},
         afterHit: null,
         trackPerformance: false,
+      })
+    })
+  })
+
+  describe('when wrong encoding header is set too early by other middleware', function() {
+    it('will fix headers', function() {
+      var app = express()
+      app.requestsProcessed = 0
+      function setWrongEncoding(req, res, next) {
+        // should be set inside custom res.writeHead
+        res.setHeader('Content-Encoding', 'gzip')
+
+        var _writeHead = res.writeHead
+        res.writeHead = function() {
+          // expect headers not to be sent
+          this.removeHeader('Content-Length')
+          // instead of really encoding body to gzip
+          this.setHeader('Content-Encoding', 'identity')
+          return _writeHead.apply(this, arguments)
+        }
+        next()
+      }
+      function respond(req, res) {
+        app.requestsProcessed++
+        res.write('wrong encoding')
+        res.end()
+      }
+      var apicacheMiddleware = apicache.newInstance().middleware()
+      app.get('/api/wrongencoding', setWrongEncoding, apicacheMiddleware, respond)
+
+      var req = request(app)
+      return req
+        .get('/api/wrongencoding')
+        .expect(200, 'wrong encoding')
+        .then(function(res) {
+          expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+          expect(app.requestsProcessed).to.equal(1)
+          return req
+            .get('/api/wrongencoding')
+            .expect(200, 'wrong encoding')
+            .then(function() {
+              expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+              expect(app.requestsProcessed).to.equal(1)
+            })
+        })
+    })
+
+    describe("when patched methods don't set implict headers immediately", function() {
+      it('will fix headers', function() {
+        var app = express()
+        app.requestsProcessed = 0
+        function changeWriteBehavior(req, res, next) {
+          res.setHeader('Content-Encoding', 'gzip')
+
+          var _writeHead = res.writeHead
+          res.writeHead = function() {
+            this.removeHeader('Content-Length')
+            this.setHeader('Content-Encoding', 'identity')
+            return _writeHead.apply(this, arguments)
+          }
+          var _write = res.write
+          res.write = function() {
+            var args = arguments
+            setImmediate(
+              function() {
+                _write.apply(this, args)
+              }.bind(this)
+            )
+            return res
+          }
+          var _end = res.end
+          res.end = function() {
+            var args = arguments
+            setImmediate(
+              function() {
+                _end.apply(this, args)
+              }.bind(this)
+            )
+            return res
+          }
+
+          next()
+        }
+        function respond(_req, res) {
+          app.requestsProcessed++
+          res.statusCode = 201
+          res.setHeader('Content-Type', 'text/plain')
+          res.write('take this')
+          res.end()
+        }
+        var apicacheMiddleware = apicache.newInstance().middleware()
+        app.get('/api/wrongencoding', changeWriteBehavior, apicacheMiddleware, respond)
+
+        return request(app)
+          .get('/api/wrongencoding')
+          .expect(201, 'take this')
+          .expect('Content-Type', 'text/plain')
+          .then(function(res) {
+            expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+            expect(app.requestsProcessed).to.equal(1)
+            return request(app)
+              .get('/api/wrongencoding')
+              .expect(201, 'take this')
+              .expect('Content-Type', 'text/plain')
+              .then(function(res) {
+                expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
+                expect(app.requestsProcessed).to.equal(1)
+              })
+          })
       })
     })
   })
@@ -1636,8 +1752,7 @@ apis.concat(revertedCompressionApis).forEach(function(api) {
             .then(function() {
               return new Promise(function(resolve) {
                 setImmediate(function() {
-                  var expectation = api.name.indexOf('restify+gzip') === -1
-                  resolve(expect(that.wasCompressorCalled).to.equal(expectation))
+                  resolve(expect(that.wasCompressorCalled).to.equal(true))
                 })
               })
             })

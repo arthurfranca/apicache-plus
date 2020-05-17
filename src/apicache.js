@@ -240,8 +240,13 @@ function ApiCache() {
     })
   }
 
-  function isNumeric(n) {
-    return !isNaN(parseFloat(n)) && isFinite(n)
+  function fixEncodingHeaders(chunk, headers) {
+    if (!chunk || !headers) return
+    if (Compressor.isReallyCompressed(chunk, headers['content-encoding'])) {
+      delete headers['content-length']
+    } else {
+      delete headers['content-encoding']
+    }
   }
 
   function makeResponseCacheable(
@@ -276,11 +281,7 @@ function ApiCache() {
       end: res.end,
     }
 
-    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
-      if (res._shouldCacheResWriteHeadVersionAlreadyRun) {
-        return apicacheResPatches.writeHead.apply(this, arguments)
-      }
-
+    function customWriteHead(statusCode, statusMsgOrHeaders, maybeHeaders) {
       res.statusCode = statusCode
 
       // add cache control headers
@@ -312,6 +313,14 @@ function ApiCache() {
         )
         res._shouldCacheResWriteHeadVersionAlreadyRun = true
       }
+    }
+
+    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
+      if (res._shouldCacheResWriteHeadVersionAlreadyRun) {
+        return apicacheResPatches.writeHead.apply(this, arguments)
+      }
+
+      customWriteHead(statusCode, statusMsgOrHeaders, maybeHeaders)
 
       return apicacheResPatches.writeHead.apply(this, arguments)
     }
@@ -343,7 +352,7 @@ function ApiCache() {
         var expireCallback = globalOptions.events.expire
         var cache = redisCache || memCache
         var chunkSize =
-          // if res.end was called first, it will have only one chunk
+          // if res.end was called first (without calling write), it will have only one chunk
           method === 'end'
             ? Buffer.byteLength(chunk || '', encoding)
             : res.socket.writableHighWaterMark
@@ -378,16 +387,10 @@ function ApiCache() {
 
         return (wstream = cacheWstream.then(function(wstream) {
           if (wstream.isLocked) return wstream
-          var isRestifyGzipMiddlewareAttached = !!res.handledGzip
-          if (isRestifyGzipMiddlewareAttached) {
-            // the middleware will always preset content-encoding to gzip even if
-            // apicache is about to receive raw response stream (middleware attached before apicache)
-            if (isNumeric((res._currentResponseHeaders || {})['content-length'])) {
-              delete res._currentResponseHeaders['content-encoding']
-            }
 
-            return wstream
-          }
+          // some middlewares will preset content-encoding to e.g. gzip too early
+          // even if apicache is about to receive uncompressed response stream (middleware attached before apicache's one)
+          fixEncodingHeaders(chunk, res._currentResponseHeaders)
 
           var tstream = Compressor.run(
             {
@@ -411,6 +414,9 @@ function ApiCache() {
     ;['write', 'end'].forEach(function(method) {
       var ret
       res[method] = function(chunk, encoding) {
+        if (!this.headersSent) {
+          customWriteHead(res.statusCode, res.statusMsgOrHeaders, getSafeHeaders(res))
+        }
         ret = apicacheResPatches[method].apply(this, arguments)
         getWstream(method, chunk, encoding).then(function(wstream) {
           wstream[method](chunk, encoding)
@@ -553,22 +559,18 @@ function ApiCache() {
         })
     }
 
-    // restify middleware will always gzip when attached before apicache,
-    // even if we change accept-encoding or content-encoding when sending cached version
-    var isntRestifyGzipMiddlewareAttached = !response.handledGzip
-    // dont use headers['content-encoding'] as it may be already changed to gzip by restify middleware
+    // dont use headers['content-encoding'] as it may be already changed to gzip by some middleware
     var cachedEncoding = (cacheObjectHeaders['content-encoding'] || 'identity').split(',')[0]
     var requestAccepts = accepts(request)
     if (
       (cachedEncoding === 'identity' ||
-        (isntRestifyGzipMiddlewareAttached &&
-          !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || ''))) &&
+        !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
       requestAccepts.encodings(cachedEncoding)
     ) {
       // Doing response.writeHead(cacheObject.status || 200, headers)
-      // can make writeHead patch from some compression middlewares (e.g. restify's gzip one) fail
+      // can make writeHead patch from some compression middlewares fail
       // Using res.writeHead with headers that don't mess with content-length / content-encoding
-      // is mostly ok
+      // would mostly be ok
       preWriteHead(response, cacheObject.status || 200, headers)
       return getRstream().pipe(response)
       // try to decompress
@@ -588,8 +590,8 @@ function ApiCache() {
       tstream.on('error', function() {
         debug('error in decompression stream')
         this.unpipe()
-        // erroed cause didn't need to decompress
-        // probably due to restify gzip middleware setting content-encoding to gzip too early
+        // if erroed cause didn't need to decompress
+        // try sending it without transforming
         getRstream()
           .on('error', function() {
             debug('error in decompression stream')
