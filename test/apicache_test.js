@@ -926,6 +926,17 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it('can handle absent property from appendKey params', function() {
+        var app = mockAPI.create('10 seconds', { appendKey: ['method', 'undefined'] })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function() {
+            expect(app.apicache.getIndex().all[0]).to.equal('/api/movies')
+          })
+      })
+
       it('properly uses custom appendKey(req, res) function', function() {
         var appendKey = function(req, res) {
           return req.method + res.id
@@ -937,6 +948,17 @@ describe('.middleware {MIDDLEWARE}', function() {
           .expect(200, movies)
           .then(function() {
             expect(app.apicache.getIndex().all[0]).to.equal('/api/movies$$appendKey=GET123')
+          })
+      })
+
+      it('can set null local appendKey param to override global one', function() {
+        var app = mockAPI.create('10 seconds', { appendKey: ['method'] }, null, { appendKey: null })
+
+        return request(app)
+          .get('/api/movies')
+          .expect(200, movies)
+          .then(function() {
+            expect(app.apicache.getIndex().all[0]).to.equal('/api/movies')
           })
       })
 

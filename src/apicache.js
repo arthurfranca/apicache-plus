@@ -66,7 +66,7 @@ function ApiCache() {
     defaultDuration: 3600000,
     enabled: true,
     isBypassable: true,
-    appendKey: [],
+    appendKey: null,
     jsonp: false,
     redisClient: false,
     redisPrefix: '',
@@ -946,15 +946,19 @@ function ApiCache() {
       }
 
       // add appendKey (either custom function or response path)
-      if (typeof opt.appendKey === 'function') {
-        key += '$$appendKey=' + opt.appendKey(req, res)
-      } else if (opt.appendKey.length > 0) {
-        var appendKey = req
+      if (opt.appendKey) {
+        var appendKey
 
-        for (var i = 0; i < opt.appendKey.length; i++) {
-          appendKey = appendKey[opt.appendKey[i]]
+        if (typeof opt.appendKey === 'function') {
+          appendKey = opt.appendKey(req, res)
+        } else if (opt.appendKey.length > 0) {
+          appendKey = req
+          for (var i = 0; i < opt.appendKey.length; i++) {
+            if (!appendKey) break
+            appendKey = appendKey[opt.appendKey[i]]
+          }
         }
-        key += '$$appendKey=' + appendKey
+        if (appendKey) key += '$$appendKey=' + appendKey
       }
 
       var cache = redisCache || memCache
