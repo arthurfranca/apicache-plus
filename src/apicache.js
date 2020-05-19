@@ -470,7 +470,7 @@ function ApiCache() {
     )
 
     Object.assign(headers, filterBlacklistedHeaders(cacheObjectHeaders), {
-      // set properly-decremented max-age header.  This ensures that max-age is in sync with the cache expiration.
+      // set properly-decremented max-age header. This ensures that max-age is in sync with the cache expiration.
       'cache-control': (
         cacheObjectHeaders['cache-control'] ||
         (SAFE_HTTP_METHODS.indexOf(request.method) !== -1
@@ -743,7 +743,7 @@ function ApiCache() {
 
   this.middleware = function cache(strDuration, middlewareToggle, localOptions) {
     if (!localOptions) localOptions = {}
-    var duration = instance.getDuration(strDuration)
+    var duration = parseDuration(strDuration)
     var opt = {}
 
     var middlewareOptionsIndex = middlewareOptions.length
@@ -753,6 +753,10 @@ function ApiCache() {
 
     var options = function(localOptions) {
       if (localOptions) {
+        if (localOptions.defaultDuration) {
+          localOptions.defaultDuration = parseDuration(localOptions.defaultDuration)
+          duration = localOptions.defaultDuration
+        }
         middlewareOptions[middlewareOptionsIndex].localOptions = localOptions
         syncOptions(middlewareOptionsIndex)
       }
@@ -939,6 +943,9 @@ function ApiCache() {
       // } else if (middlewareToggle !== undefined && !middlewareToggle) {
       //   return bypass()
       // }
+
+      // this can change at runtime
+      duration = instance.getDuration(duration)
 
       // embed timer
       req.apicacheTimer = new Date()

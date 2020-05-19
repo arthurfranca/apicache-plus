@@ -487,6 +487,62 @@ describe('.middleware {MIDDLEWARE}', function() {
     })
   })
 
+  it('can change global defaultDuration at runtime', function() {
+    apicache = apicache.newInstance()
+    apicache.options({
+      defaultDuration: '30 seconds',
+    })
+    var middleware = apicache.middleware()
+    var app = express()
+    app.get('/api/localduration', middleware, function(_req, res) {
+      res.end()
+    })
+    apicache.options({
+      defaultDuration: '20 seconds',
+    })
+
+    return request(app)
+      .get('/api/localduration')
+      .expect(200)
+      .expect('Cache-Control', 'max-age=20, must-revalidate')
+  })
+
+  it('can change local defaultDuration at runtime', function() {
+    var middleware = apicache.newInstance().middleware(null, null, { defaultDuration: '2 seconds' })
+    var app = express()
+    app.get('/api/localduration', middleware, function(_req, res) {
+      res.end()
+    })
+    middleware.options({
+      defaultDuration: '10 seconds',
+    })
+
+    return request(app)
+      .get('/api/localduration')
+      .expect(200)
+      .expect('Cache-Control', 'max-age=10, must-revalidate')
+  })
+
+  it('can change local defaultDuration at runtime even if global one changed later', function() {
+    apicache = apicache.newInstance()
+    var middleware = apicache.middleware(null, null, { defaultDuration: '2 seconds' })
+    var app = express()
+    app.get('/api/localduration', middleware, function(_req, res) {
+      res.end()
+    })
+    middleware.options({
+      defaultDuration: '10 seconds',
+    })
+    apicache.options({
+      defaultDuration: '40 seconds',
+    })
+
+    return request(app)
+      .get('/api/localduration')
+      .expect(200)
+      .expect('Cache-Control', 'max-age=10, must-revalidate')
+  })
+
   describe('when wrong encoding header is set too early by other middleware', function() {
     it('will fix headers', function() {
       var app = express()
