@@ -268,6 +268,15 @@ describe('.middleware {MIDDLEWARE}', function() {
     var middleware = require('../src/apicache').middleware('10 seconds')
     expect(typeof middleware).to.equal('function')
     expect(middleware.length).to.equal(3)
+    expect(middleware.name).to.equal('cache')
+  })
+
+  it('can be called by a shortcut', function() {
+    var apicache = require('../src/apicache')
+    var middleware = apicache('10 seconds')
+    expect(typeof middleware).to.equal('function')
+    expect(middleware.length).to.equal(3)
+    expect(middleware.name).to.equal('cache')
   })
 
   describe('options', function() {

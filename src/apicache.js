@@ -1115,6 +1115,11 @@ function ApiCache() {
   // initialize index
   this.resetIndex()
   this.initRedis()
+
+  function _this() {
+    return this.middleware.apply(this, arguments)
+  }
+  return Object.assign(_this.bind(this), this)
 }
 
 module.exports = new ApiCache()
