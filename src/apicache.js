@@ -621,11 +621,20 @@ function ApiCache() {
     }
   }
 
-  function syncOptions() {
-    for (var i in middlewareOptions) {
+  var syncOptions = (function() {
+    function syncOptionsByIndex(i) {
       Object.assign(middlewareOptions[i].options, globalOptions, middlewareOptions[i].localOptions)
     }
-  }
+
+    return function(i) {
+      if (i) return syncOptionsByIndex(i)
+      else {
+        for (i in middlewareOptions) {
+          syncOptionsByIndex(i)
+        }
+      }
+    }
+  })()
 
   this.clear = function(target, isAutomatic) {
     if (redisCache) {
@@ -733,22 +742,20 @@ function ApiCache() {
   }
 
   this.middleware = function cache(strDuration, middlewareToggle, localOptions) {
+    if (!localOptions) localOptions = {}
     var duration = instance.getDuration(strDuration)
     var opt = {}
 
+    var middlewareOptionsIndex = middlewareOptions.length
     middlewareOptions.push({
       options: opt,
     })
 
     var options = function(localOptions) {
       if (localOptions) {
-        middlewareOptions.find(function(middleware) {
-          return middleware.options === opt
-        }).localOptions = localOptions
+        middlewareOptions[middlewareOptionsIndex].localOptions = localOptions
+        syncOptions(middlewareOptionsIndex)
       }
-
-      syncOptions()
-
       return opt
     }
 
@@ -1055,12 +1062,11 @@ function ApiCache() {
         (options.redisClient !== undefined && globalOptions.redisClient !== options.redisClient) ||
         (options.redisPrefix !== undefined && globalOptions.redisPrefix !== options.redisPrefix)
       Object.assign(globalOptions, options)
-      syncOptions()
-
       if ('defaultDuration' in options) {
         // Convert the default duration to a number in milliseconds (if needed)
         globalOptions.defaultDuration = parseDuration(globalOptions.defaultDuration, 3600000)
       }
+      syncOptions()
 
       if (globalOptions.trackPerformance) {
         debug('WARNING: using trackPerformance flag can cause high memory usage!')
