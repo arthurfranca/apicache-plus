@@ -7,9 +7,10 @@ var THRESHOLD = 1024
 var NO_MESSAGE_BODY_STATUS_CODES = [204, 205, 304]
 var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
 var MIN_CHUNK_SIZE = 64
-var DEFAULT_HIGH_WATER_MARK = 16384
 
 function Compressor(options, debug) {
+  if (!options) options = {}
+  if ([null, undefined].indexOf(options.chunkSize) !== -1) options.chunkSize = 0
   Object.assign(this, options)
   this.debug = debug || function() {}
 }
@@ -76,12 +77,11 @@ Compressor.prototype.isAlreadyCompressed = function() {
 Compressor.prototype.isContentLengthBellowThreshold = function() {
   if (
     [null, undefined, ''].indexOf(this.responseHeaders['content-length']) !== -1 &&
-    // if res.end wasnt called first, content length can't be inferred from chunk size
+    // if res.end wasnt called first (without calling write), content length can't be inferred from chunk size
     this.responseMethod !== 'end'
   ) {
-    return false
+    return this.chunkSize === 0
   }
-
   var contentLength = Number(this.responseHeaders['content-length']) || this.chunkSize
   return contentLength < THRESHOLD
 }
@@ -130,7 +130,7 @@ Compressor.prototype.run = function() {
 
     var encoding
     var tstream
-    var chunkSize = Math.max(MIN_CHUNK_SIZE, this.chunkSize || DEFAULT_HIGH_WATER_MARK)
+    var chunkSize = Math.max(MIN_CHUNK_SIZE, this.chunkSize)
 
     // choose best compression method available
     // (don't care about what request accepts, as cache will be reused by many different clients)

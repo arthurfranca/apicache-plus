@@ -344,18 +344,20 @@ function ApiCache() {
         res._shouldCacheResWriteOrEndVersionAlreadyRun = true
 
         var getCacheObject = function() {
-          return createCacheObject(res.statusCode, res._currentResponseHeaders || {})
+          return createCacheObject(res.statusCode, res._currentResponseHeaders)
         }
         var getGroup = function() {
           return req.apicacheGroup
         }
         var expireCallback = globalOptions.events.expire
         var cache = redisCache || memCache
-        var chunkSize =
-          // if res.end was called first (without calling write), it will have only one chunk
+        var chunkSize = Buffer.byteLength(chunk || '', encoding)
+        // if res.end was called first (without calling write), it will have only one chunk
+        // res.socket.writableHighWaterMark is node gte 9
+        var highWaterMark =
           method === 'end'
-            ? Buffer.byteLength(chunk || '', encoding)
-            : res.socket.writableHighWaterMark
+            ? chunkSize
+            : res.socket.writableHighWaterMark || res.socket._writableState.highWaterMark
 
         var cacheWstream = cache
           .createWriteStream(
@@ -364,7 +366,7 @@ function ApiCache() {
             duration,
             expireCallback,
             getGroup,
-            chunkSize,
+            highWaterMark,
             // this is needed while memCache index/groups are still handled externally
             !redisCache &&
               function(statusCode, headers, data, encoding) {
@@ -388,9 +390,15 @@ function ApiCache() {
         return (wstream = cacheWstream.then(function(wstream) {
           if (wstream.isLocked) return wstream
 
+          // also indicates it may be already compressed
+          var otherMiddlewareMayWantToChangeCompression =
+            Compressor.getFirstContentEncoding(res._currentResponseHeaders['content-encoding']) !==
+            'identity'
           // some middlewares will preset content-encoding to e.g. gzip too early
           // even if apicache is about to receive uncompressed response stream (middleware attached before apicache's one)
           fixEncodingHeaders(chunk, res._currentResponseHeaders)
+          // don't compress before caching
+          if (otherMiddlewareMayWantToChangeCompression) return wstream
 
           var tstream = Compressor.run(
             {
@@ -414,7 +422,8 @@ function ApiCache() {
     ;['write', 'end'].forEach(function(method) {
       var ret
       res[method] = function(chunk, encoding) {
-        if (!this.headersSent) {
+        if (!this.headersSent && !this.customWriteHeadCalled) {
+          this.customWriteHeadCalled = true
           customWriteHead(res.statusCode, res.statusMsgOrHeaders, getSafeHeaders(res))
         }
         ret = apicacheResPatches[method].apply(this, arguments)
@@ -551,7 +560,8 @@ function ApiCache() {
           cacheObject.key,
           cacheObject['data-token'] || cacheObject.data,
           cacheObject.encoding,
-          response.socket.writableHighWaterMark
+          // res.socket.writableHighWaterMark is node gte 9
+          response.socket.writableHighWaterMark || response.socket._writableState.highWaterMark
         )
         .on('error', function() {
           debug('error in sendCachedResponse function')
@@ -559,12 +569,15 @@ function ApiCache() {
         })
     }
 
-    // dont use headers['content-encoding'] as it may be already changed to gzip by some middleware
+    // dont use headers['content-encoding'] as it may be already changed to e.g. gzip by some middleware
     var cachedEncoding = (cacheObjectHeaders['content-encoding'] || 'identity').split(',')[0]
+    var currentResCacheEncoding = (headers['content-encoding'] || 'identity').split(',')[0]
+    var noOtherMiddlewareMayWantToChangeCompression = cachedEncoding === currentResCacheEncoding
     var requestAccepts = accepts(request)
     if (
       (cachedEncoding === 'identity' ||
-        !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || '')) &&
+        (noOtherMiddlewareMayWantToChangeCompression &&
+          !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || ''))) &&
       requestAccepts.encodings(cachedEncoding)
     ) {
       // Doing response.writeHead(cacheObject.status || 200, headers)

@@ -268,7 +268,6 @@ describe('.middleware {MIDDLEWARE}', function() {
     var middleware = require('../src/apicache').middleware('10 seconds')
     expect(typeof middleware).to.equal('function')
     expect(middleware.length).to.equal(3)
-    expect(middleware.name).to.equal('cache')
   })
 
   it('can be called by a shortcut', function() {
@@ -276,7 +275,6 @@ describe('.middleware {MIDDLEWARE}', function() {
     var middleware = apicache('10 seconds')
     expect(typeof middleware).to.equal('function')
     expect(middleware.length).to.equal(3)
-    expect(middleware.name).to.equal('cache')
   })
 
   describe('options', function() {
@@ -557,7 +555,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       var app = express()
       app.requestsProcessed = 0
       function setWrongEncoding(req, res, next) {
-        // should be set inside custom res.writeHead
+        // should be set inside custom res.writeHead but sometimes isn't
         res.setHeader('Content-Encoding', 'gzip')
 
         var _writeHead = res.writeHead
@@ -572,6 +570,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       }
       function respond(req, res) {
         app.requestsProcessed++
+        res.setHeader('Content-Type', 'text/plain')
         res.write('wrong encoding')
         res.end()
       }
@@ -579,15 +578,17 @@ describe('.middleware {MIDDLEWARE}', function() {
       app.get('/api/wrongencoding', setWrongEncoding, apicacheMiddleware, respond)
 
       var req = request(app)
-      return req
+      return request(app)
         .get('/api/wrongencoding')
         .expect(200, 'wrong encoding')
+        .expect('Content-Type', 'text/plain')
         .then(function(res) {
           expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
           expect(app.requestsProcessed).to.equal(1)
           return req
             .get('/api/wrongencoding')
             .expect(200, 'wrong encoding')
+            .expect('Content-Type', 'text/plain')
             .then(function() {
               expect(res.headers['content-encoding'] || 'identity').to.equal('identity')
               expect(app.requestsProcessed).to.equal(1)
@@ -600,11 +601,14 @@ describe('.middleware {MIDDLEWARE}', function() {
         var app = express()
         app.requestsProcessed = 0
         function changeWriteBehavior(req, res, next) {
+          // should be set inside custom res.writeHead but sometimes isn't
           res.setHeader('Content-Encoding', 'gzip')
 
           var _writeHead = res.writeHead
           res.writeHead = function() {
+            // expect headers not to be sent
             this.removeHeader('Content-Length')
+            // instead of really encoding body to gzip
             this.setHeader('Content-Encoding', 'identity')
             return _writeHead.apply(this, arguments)
           }
@@ -638,8 +642,8 @@ describe('.middleware {MIDDLEWARE}', function() {
           res.write('take this')
           res.end()
         }
-        var apicacheMiddleware = apicache.newInstance().middleware()
-        app.get('/api/wrongencoding', changeWriteBehavior, apicacheMiddleware, respond)
+        var cache = apicache.newInstance()
+        app.get('/api/wrongencoding', changeWriteBehavior, cache(), respond)
 
         return request(app)
           .get('/api/wrongencoding')
@@ -1839,7 +1843,9 @@ apis.concat(revertedCompressionApis).forEach(function(api) {
             .then(function() {
               return new Promise(function(resolve) {
                 setImmediate(function() {
-                  resolve(expect(that.wasCompressorCalled).to.equal(true))
+                  var expectation = !// !(already compressed || would compress even if already compressed)
+                  (api.name.indexOf('(after)') !== -1 || api.name.indexOf('restify+gzip') !== -1)
+                  resolve(expect(that.wasCompressorCalled).to.equal(expectation))
                 })
               })
             })
