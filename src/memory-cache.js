@@ -1,4 +1,7 @@
 var stream = require('stream')
+var helpers = require('./helpers')
+var setLongTimeout = helpers.setLongTimeout
+var clearLongTimeout = helpers.clearLongTimeout
 
 function MemoryCache() {
   this.cache = {}
@@ -19,7 +22,7 @@ MemoryCache.prototype.acquireLockWithId = function(key, id, pttl) {
       else return resolve(false)
     }
 
-    var timeout = setTimeout(function() {
+    var timeout = setLongTimeout(function() {
       delete that.lockWithId[key]
     }, pttl)
 
@@ -40,7 +43,7 @@ MemoryCache.prototype.releaseLockWithId = function(key, id) {
 
     if (!lock) return resolve(true)
     else if (lock.heldBy === id) {
-      clearTimeout(lock.timeout)
+      clearLongTimeout(lock.timeout)
       delete that.lockWithId[key]
       return resolve(true)
     } else resolve(false)
@@ -182,7 +185,7 @@ MemoryCache.prototype.add = function(key, value, time, timeoutCallback) {
   var entry = {
     value: value,
     expire: time + Date.now(),
-    timeout: setTimeout(function() {
+    timeout: setLongTimeout(function() {
       instance.delete(key)
       return timeoutCallback && typeof timeoutCallback === 'function' && timeoutCallback(value, key)
     }, time),
@@ -198,7 +201,7 @@ MemoryCache.prototype.delete = function(key) {
   var entry = this.cache[key]
 
   if (entry) {
-    clearTimeout(entry.timeout)
+    clearLongTimeout(entry.timeout)
     delete this.cache[key]
   }
 

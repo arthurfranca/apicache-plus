@@ -12,7 +12,8 @@
     "before": false,
     "after": false,
     "beforeEach": false,
-    "afterEach": false
+    "afterEach": false,
+    "expect": false
   },
   "rules": {
     "indent": ["error", 2, { "FunctionExpression": { "parameters": "first" }, "SwitchCase": 1 }]

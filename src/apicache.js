@@ -7,6 +7,9 @@ var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
 var pkg = require('../package.json')
+var helpers = require('./helpers')
+var setLongTimeout = helpers.setLongTimeout
+var clearLongTimeout = helpers.clearLongTimeout
 
 var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
 var CACHEABLE_STATUS_CODES = {
@@ -174,10 +177,10 @@ function ApiCache() {
     var expireCallback = globalOptions.events.expire
     memCache.add(key, value, duration, expireCallback)
 
-    // add automatic cache clearing from duration, includes max limit on setTimeout
-    timers[key] = setTimeout(function() {
+    // add automatic cache clearing from duration
+    timers[key] = setLongTimeout(function() {
       instance.clear(key, true)
-    }, Math.min(duration, 2147483647))
+    }, duration)
   }
 
   function debugCacheAddition(cache, key, strDuration, req, res) {
@@ -668,7 +671,7 @@ function ApiCache() {
 
       group.forEach(function(key) {
         debug('clearing cached entry for "' + key + '"')
-        clearTimeout(timers[key])
+        clearLongTimeout(timers[key])
         delete timers[key]
         memCache.delete(key)
 
@@ -678,7 +681,7 @@ function ApiCache() {
       delete index.groups[target]
     } else if (target) {
       debug('clearing ' + (isAutomatic ? 'expired' : 'cached') + ' entry for "' + target + '"')
-      clearTimeout(timers[target])
+      clearLongTimeout(timers[target])
       delete timers[target]
       // clear actual cached entry
       memCache.delete(target)
@@ -1030,7 +1033,7 @@ function ApiCache() {
           else {
             // give time to prior request finish caching
             return new Promise(function(resolve) {
-              setTimeout(function() {
+              setLongTimeout(function() {
                 resolve(attemptCacheHit())
               }, 10)
             })

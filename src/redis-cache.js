@@ -1,6 +1,9 @@
 var stream = require('stream')
 var Redlock = require('redlock')
 var generateUuidV4 = require('uuid').v4
+var helpers = require('./helpers')
+var setLongTimeout = helpers.setLongTimeout
+var clearLongTimeout = helpers.clearLongTimeout
 
 function RedisCache(options, debug) {
   this.redis = options.redisClient
@@ -194,7 +197,7 @@ RedisCache.prototype.createWriteStream = (function() {
               if (err || res === null) cb(err)
 
               if (timeoutCallback && typeof timeoutCallback === 'function') {
-                that.timers[key] = setTimeout(function() {
+                that.timers[key] = setLongTimeout(function() {
                   that.debug('clearing expired entry for "' + key + '"')
                   timeoutCallback(value, key)
                 }, time)
@@ -326,7 +329,7 @@ RedisCache.prototype.createReadStream = function(key, dataToken, encoding, highW
         if (retry-- === 0) throw err
 
         return new Promise(function(resolve) {
-          setTimeout(function() {
+          setLongTimeout(function() {
             resolve(pushChunk(push, retry))
           }, 20)
         })
@@ -399,7 +402,7 @@ RedisCache.prototype.clear = function(target) {
                 multi.del(keys)
                 keys.forEach(function(key) {
                   that.debug('clearing cached entry for "' + key + '"')
-                  clearTimeout(that.timers[key])
+                  clearLongTimeout(that.timers[key])
                 })
                 if (cursor === '0') {
                   multi.del(group)
@@ -426,7 +429,7 @@ RedisCache.prototype.clear = function(target) {
             that.redis.del(target, function(err, deleteCount) {
               if (err) reject(err)
               else {
-                clearTimeout(that.timers[target])
+                clearLongTimeout(that.timers[target])
                 resolve(parseInt(deleteCount, 10))
               }
             })
@@ -441,7 +444,7 @@ RedisCache.prototype.clear = function(target) {
                 .exec(function(err, res) {
                   if (err || res === null) return reject(err)
 
-                  clearTimeout(that.timers[target])
+                  clearLongTimeout(that.timers[target])
                   var deleteCount = parseInt((res[2] || [null, 0])[1], 10)
                   var wasGroupDeleted = parseInt((res[3] || [null, 1])[1], 10) === 0
                   if (wasGroupDeleted) deleteCount++
@@ -630,7 +633,7 @@ RedisCache.prototype._clearAll = function() {
 
         that.redis.flushdb(function() {
           Object.keys(that.timers).forEach(function(key) {
-            clearTimeout(that.timers[key])
+            clearLongTimeout(that.timers[key])
           })
           resolve(parseInt(count, 10))
         })
@@ -658,7 +661,7 @@ RedisCache.prototype._clearAll = function() {
             deleteCount += parseInt(removedCount, 10)
 
             keys.forEach(function(key) {
-              clearTimeout(that.timers[key])
+              clearLongTimeout(that.timers[key])
             })
             if (cursor === '0') resolve(deleteCount)
             else resolve(deleteAll(cursor, match))

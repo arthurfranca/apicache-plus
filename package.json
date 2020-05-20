@@ -3,7 +3,7 @@
   "version": "1.8.0",
   "scripts": {
     "lint": "eslint .",
-    "test": "nyc mocha $(find test -name '*.test.js') --recursive",
+    "test": "nyc mocha test --recursive",
     "test:watch": "npm run test -- --watch",
     "coverage": "nyc report --reporter=text-lcov | coveralls",
     "prepublishOnly": "npm run test"
