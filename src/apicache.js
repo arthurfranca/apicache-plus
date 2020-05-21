@@ -1,7 +1,8 @@
-var url = require('url')
 var zlib = require('zlib')
 var accepts = require('accepts')
 var stream = require('stream')
+var querystring = require('querystring')
+var jsonSortify = require('json.sortify')
 var generateUuidV4 = require('uuid').v4
 var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
@@ -70,7 +71,7 @@ function ApiCache() {
     defaultDuration: 3600000,
     enabled: true,
     isBypassable: false,
-    appendKey: null,
+    append: null,
     jsonp: false,
     redisClient: false,
     redisPrefix: '',
@@ -653,6 +654,149 @@ function ApiCache() {
     }
   })()
 
+  function getAppendice(append, req, res) {
+    if (!append) return ''
+
+    var appendice
+    if (typeof append === 'function') {
+      appendice = append(req, res)
+      // ['x', 'y'] => req?.x?.y
+    } else if (append.length > 0) {
+      appendice = req
+      for (var i = 0; i < append.length; i++) {
+        if (!appendice) break
+        appendice = appendice[append[i]]
+      }
+    }
+
+    return appendice || ''
+  }
+
+  function getKeyParts(req, res, options) {
+    var query
+    if (req.query !== null && typeof req.query === 'object') query = Object.assign({}, req.query)
+    // In Express,the url is ambiguous based on where a router is mounted.  originalUrl will give the full Url
+    var url = (req.originalUrl || req.url).replace(/\/?(?:\?([^#]*)(?:#.*)?)?$/, function(
+      _match,
+      qs
+    ) {
+      if (!query) {
+        query = querystring.parse(qs)
+        delete query['']
+      }
+      return ''
+    })
+    // couldn't use (?:(?<!^)\/)? negative look-behind instead of \/? at regexp above to keep / if at beginning (node gte 9)
+    if (url === '') url = '/'
+    if (options.jsonp) {
+      if ([true, false].indexOf(options.jsonp) === -1) {
+        delete query.jsonp
+        delete query.callback
+      } else delete query[options.jsonp]
+    }
+
+    var parts = {
+      method: req.method,
+      url: url,
+      params: Object.assign(query, typeof req.body === 'object' ? Object.assign({}, req.body) : {}),
+      appendice: getAppendice(options.append || options.appendKey, req, res),
+    }
+
+    if (options.interceptKeyParts) {
+      parts = options.interceptKeyParts(req, res, parts) || parts
+    }
+    return parts
+  }
+
+  function getSimilarKeyFromOtherMethod(key, method, otherMethod) {
+    return key.replace(method.toLowerCase(), otherMethod.toLowerCase())
+  }
+
+  this.getKey = function(keyParts) {
+    if (!keyParts || typeof keyParts !== 'object') return '{}'
+
+    return (
+      (typeof keyParts.method === 'string' ? keyParts.method.toLowerCase() : '') +
+      (typeof keyParts.url === 'string' ? keyParts.url : '') +
+      (keyParts.params !== null && typeof keyParts.params === 'object'
+        ? jsonSortify(keyParts.params)
+        : '{}') +
+      (typeof keyParts.appendice === 'string' ? keyParts.appendice : '')
+    )
+  }
+
+  this.has = function(key) {
+    if ([null, undefined].indexOf(key) !== -1) return Promise.resolve(false)
+
+    return (redisCache || memCache).has(key)
+  }
+
+  this.get = function(key) {
+    if ([null, undefined].indexOf(key) !== -1) return Promise.resolve(false)
+
+    return Promise.resolve((redisCache || memCache).get(key)).then(function(cached) {
+      if (!cached) return null
+
+      cached = cached.value
+      // this.set can store any value, so return raw cached if not what apicache regularly stores
+      if (
+        cached === null ||
+        typeof cached !== 'object' ||
+        !['status', 'headers', 'data'].every(function(k) {
+          return k in cached
+        })
+      ) {
+        return cached
+      }
+
+      // try formatting
+      try {
+        var data = cached.data
+        if ([null, undefined].indexOf(data) === -1) {
+          data = data.toString(cached.encoding)
+          try {
+            data = JSON.parse(data)
+          } catch (err) {}
+        }
+
+        // don't send with all properties if it's really what apicache regularly stores
+        return {
+          status: cached.status,
+          headers: cached.headers,
+          data: data,
+        }
+      } catch (err) {
+        return cached
+      }
+    })
+  }
+
+  this.set = function(key, value, duration, group, expirationCallback) {
+    if ([null, undefined].indexOf(key) !== -1) return Promise.resolve(false)
+
+    duration = this.getDuration(duration)
+    return (
+      // for now, this is the way we make sure .set can safely modify an already existing item
+      // e.g. it will remove from old group
+      Promise.resolve(this.clear(key))
+        .then(function() {
+          return Promise.resolve(
+            (redisCache || memCache).add(key, value, duration, expirationCallback, group)
+          )
+        })
+        // this is needed while memCache index/groups are still handled externally
+        .then(function() {
+          if (!redisCache) {
+            addIndexEntries(key, { apicacheGroup: group })
+          }
+          return value
+        })
+        .catch(function() {
+          return false
+        })
+    )
+  }
+
   this.clear = function(target, isAutomatic) {
     if (redisCache) {
       return redisCache
@@ -680,7 +824,7 @@ function ApiCache() {
       })
 
       delete index.groups[target]
-    } else if (target) {
+    } else if (target || target === '') {
       debug('clearing ' + (isAutomatic ? 'expired' : 'cached') + ' entry for "' + target + '"')
       clearLongTimeout(timers[target])
       delete timers[target]
@@ -967,33 +1111,11 @@ function ApiCache() {
       // embed timer
       req.apicacheTimer = new Date()
 
-      // In Express 4.x the url is ambigious based on where a router is mounted.  originalUrl will give the full Url
-      var key = req.originalUrl || req.url
-
-      // Remove querystring from key if jsonp option is enabled
-      if (opt.jsonp) {
-        // eslint-disable-next-line node/no-deprecated-api
-        key = url.URL ? new url.URL(key).pathname : url.parse(key).pathname
-      }
-
-      // add appendKey (either custom function or response path)
-      if (opt.appendKey) {
-        var appendKey
-
-        if (typeof opt.appendKey === 'function') {
-          appendKey = opt.appendKey(req, res)
-        } else if (opt.appendKey.length > 0) {
-          appendKey = req
-          for (var i = 0; i < opt.appendKey.length; i++) {
-            if (!appendKey) break
-            appendKey = appendKey[opt.appendKey[i]]
-          }
-        }
-        if (appendKey) key += '$$appendKey=' + appendKey
-      }
-
+      var keyParts = getKeyParts(req, res, opt)
+      var key = instance.getKey(keyParts)
       var cache = redisCache || memCache
-      var _makeResponseCacheable = function() {
+
+      function _makeResponseCacheable() {
         try {
           perf.miss(key)
           req.makeResponseCacheableCount = (req.makeResponseCacheableCount || 0) + 1
@@ -1020,13 +1142,14 @@ function ApiCache() {
         }
       }
 
-      var isSameRequestStackAllowedToMakeResponseCacheable = function() {
+      function isSameRequestStackAllowedToMakeResponseCacheable() {
         return cache.acquireLockWithId(
           'make-cacheable:' + key,
           typeof req.id === 'function' ? req.id() : req.id
         )
       }
-      var maybeMakeResponseCacheable = function() {
+
+      function maybeMakeResponseCacheable() {
         if (!req.id) req.id = generateUuidV4()
 
         return isSameRequestStackAllowedToMakeResponseCacheable().then(function(isAllowed) {
@@ -1042,10 +1165,21 @@ function ApiCache() {
         })
       }
 
-      function attemptCacheHit() {
-        var cachedPromise = Promise.resolve(cache.getValue(key))
+      function getCached(key) {
+        return Promise.resolve(cache.getValue(key)).then(function(cached) {
+          if (cached) {
+            cached.key = key
+          } else if (req.method === 'HEAD') {
+            var getMethodKey = getSimilarKeyFromOtherMethod(key, 'head', 'get')
+            return getCached(getMethodKey)
+          }
 
-        return cachedPromise
+          return cached
+        })
+      }
+
+      function attemptCacheHit() {
+        return getCached(key)
           .then(function(cached) {
             if (cached) {
               perf.hit(key)

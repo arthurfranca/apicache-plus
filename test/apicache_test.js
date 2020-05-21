@@ -200,7 +200,7 @@ describe('.getPerformance()', function() {
           hitRateLast10000: 0,
           hitRateLast100000: 0,
           lastCacheHit: null,
-          lastCacheMiss: '/api/movies',
+          lastCacheMiss: app.apicache.getKey({ method: 'get', url: '/api/movies' }),
         })
       })
   })
@@ -222,8 +222,8 @@ describe('.getPerformance()', function() {
         hitRateLast1000: 0.5,
         hitRateLast10000: 0.5,
         hitRateLast100000: 0.5,
-        lastCacheHit: '/api/movies',
-        lastCacheMiss: '/api/movies',
+        lastCacheHit: app.apicache.getKey({ method: 'get', url: '/api/movies' }),
+        lastCacheMiss: app.apicache.getKey({ method: 'get', url: '/api/movies' }),
       })
     })
   })
@@ -285,7 +285,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
     it('uses global options if local ones not provided', function() {
       apicache.options({
-        appendKey: ['test'],
+        append: ['test'],
       })
       var middleware1 = apicache.middleware('10 seconds')
       var middleware2 = apicache.middleware('20 seconds')
@@ -294,7 +294,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 3600000,
         enabled: true,
         isBypassable: false,
-        appendKey: ['test'],
+        append: ['test'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -310,7 +310,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 3600000,
         enabled: true,
         isBypassable: false,
-        appendKey: ['test'],
+        append: ['test'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -325,14 +325,14 @@ describe('.middleware {MIDDLEWARE}', function() {
 
     it('uses local options if they provided', function() {
       apicache.options({
-        appendKey: ['test'],
+        append: ['test'],
       })
       function afterHit() {}
       var middleware1 = apicache.middleware('10 seconds', null, {
         debug: true,
         isBypassable: true,
         defaultDuration: 7200000,
-        appendKey: ['bar'],
+        append: ['bar'],
         statusCodes: { include: [], exclude: ['400'] },
         events: { expire: undefined },
         headers: {
@@ -343,7 +343,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       var middleware2 = apicache.middleware('20 seconds', null, {
         debug: false,
         defaultDuration: 1800000,
-        appendKey: ['foo'],
+        append: ['foo'],
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
       })
@@ -352,7 +352,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 7200000,
         enabled: true,
         isBypassable: true,
-        appendKey: ['bar'],
+        append: ['bar'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -370,7 +370,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 1800000,
         enabled: true,
         isBypassable: false,
-        appendKey: ['foo'],
+        append: ['foo'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -386,7 +386,7 @@ describe('.middleware {MIDDLEWARE}', function() {
     it('updates options if global ones changed', function() {
       apicache.options({
         debug: true,
-        appendKey: ['test'],
+        append: ['test'],
       })
       var middleware1 = apicache.middleware('10 seconds', null, {
         defaultDuration: 7200000,
@@ -398,14 +398,14 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
       apicache.options({
         debug: false,
-        appendKey: ['foo'],
+        append: ['foo'],
       })
       expect(middleware1.options()).to.eql({
         debug: false,
         defaultDuration: 7200000,
         enabled: true,
         isBypassable: false,
-        appendKey: ['foo'],
+        append: ['foo'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -421,7 +421,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 1800000,
         enabled: true,
         isBypassable: false,
-        appendKey: ['foo'],
+        append: ['foo'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -437,7 +437,7 @@ describe('.middleware {MIDDLEWARE}', function() {
     it('updates options if local ones changed', function() {
       apicache.options({
         debug: true,
-        appendKey: ['test'],
+        append: ['test'],
       })
       var middleware1 = apicache.middleware('10 seconds', null, {
         defaultDuration: 7200000,
@@ -450,7 +450,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       middleware1.options({
         debug: false,
         defaultDuration: 1800000,
-        appendKey: ['foo'],
+        append: ['foo'],
         headers: {
           'cache-control': 'no-cache',
         },
@@ -458,14 +458,14 @@ describe('.middleware {MIDDLEWARE}', function() {
       middleware2.options({
         defaultDuration: 450000,
         enabled: false,
-        appendKey: ['foo'],
+        append: ['foo'],
       })
       expect(middleware1.options()).to.eql({
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
         isBypassable: false,
-        appendKey: ['foo'],
+        append: ['foo'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -483,7 +483,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 450000,
         enabled: false,
         isBypassable: false,
-        appendKey: ['foo'],
+        append: ['foo'],
         jsonp: false,
         redisClient: false,
         redisPrefix: '',
@@ -988,24 +988,28 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('properly uses appendKey params', function() {
-        var app = mockAPI.create('10 seconds', { appendKey: ['method'] })
+        var app = mockAPI.create('10 seconds', { append: ['method'] })
 
         return request(app)
           .get('/api/movies')
           .expect(200, movies)
           .then(function() {
-            expect(app.apicache.getIndex().all[0]).to.equal('/api/movies$$appendKey=GET')
+            expect(app.apicache.getIndex().all[0]).to.equal(
+              app.apicache.getKey({ method: 'get', url: '/api/movies', appendice: 'GET' })
+            )
           })
       })
 
       it('can handle absent property from appendKey params', function() {
-        var app = mockAPI.create('10 seconds', { appendKey: ['method', 'undefined'] })
+        var app = mockAPI.create('10 seconds', { append: ['method', 'undefined'] })
 
         return request(app)
           .get('/api/movies')
           .expect(200, movies)
           .then(function() {
-            expect(app.apicache.getIndex().all[0]).to.equal('/api/movies')
+            expect(app.apicache.getIndex().all[0]).to.equal(
+              app.apicache.getKey({ method: 'get', url: '/api/movies' })
+            )
           })
       })
 
@@ -1013,24 +1017,28 @@ describe('.middleware {MIDDLEWARE}', function() {
         var appendKey = function(req, res) {
           return req.method + res.id
         }
-        var app = mockAPI.create('10 seconds', { appendKey: appendKey })
+        var app = mockAPI.create('10 seconds', { append: appendKey })
 
         return request(app)
           .get('/api/movies')
           .expect(200, movies)
           .then(function() {
-            expect(app.apicache.getIndex().all[0]).to.equal('/api/movies$$appendKey=GET123')
+            expect(app.apicache.getIndex().all[0]).to.equal(
+              app.apicache.getKey({ method: 'get', url: '/api/movies', appendice: 'GET123' })
+            )
           })
       })
 
       it('can set null local appendKey param to override global one', function() {
-        var app = mockAPI.create('10 seconds', { appendKey: ['method'] }, null, { appendKey: null })
+        var app = mockAPI.create('10 seconds', { append: ['method'] }, null, { append: null })
 
         return request(app)
           .get('/api/movies')
           .expect(200, movies)
           .then(function() {
-            expect(app.apicache.getIndex().all[0]).to.equal('/api/movies')
+            expect(app.apicache.getIndex().all[0]).to.equal(
+              app.apicache.getKey({ method: 'get', url: '/api/movies' })
+            )
           })
       })
 
@@ -1544,13 +1552,15 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/movies')
           .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.getIndex().all).to.include('/api/movies')
+            expect(app.apicache.getIndex().all).to.include(
+              app.apicache.getKey({ method: 'get', url: '/api/movies' })
+            )
           })
 
         setTimeout(function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
           done()
-        }, 30)
+        }, 40)
       })
 
       it('executes expiration callback from globalOptions.events.expire upon entry expiration', function(done) {
@@ -1564,12 +1574,16 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/movies')
           .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.getIndex().all).to.include('/api/movies')
+            expect(app.apicache.getIndex().all).to.include(
+              app.apicache.getKey({ method: 'get', url: '/api/movies' })
+            )
           })
 
         setTimeout(function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
-          expect(callbackResponse).to.equal('/api/movies')
+          expect(callbackResponse).to.equal(
+            app.apicache.getKey({ method: 'get', url: '/api/movies' })
+          )
           done()
         }, 40)
       })
@@ -1586,14 +1600,19 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/movies')
           .then(function(res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
+            expect(
+              app.apicache.clear(app.apicache.getKey({ method: 'get', url: '/api/movies' })).all
+                .length
+            ).to.equal(0)
             expect(app.requestsProcessed).to.equal(1)
 
             return request(app)
               .get('/api/movies')
               .then(function() {
                 expect(app.apicache.getIndex().all.length).to.equal(1)
-                expect(app.apicache.getIndex().all).to.include('/api/movies')
+                expect(app.apicache.getIndex().all).to.include(
+                  app.apicache.getKey({ method: 'get', url: '/api/movies' })
+                )
                 expect(app.requestsProcessed).to.equal(2)
 
                 return new Promise(function(resolve) {
@@ -1618,14 +1637,18 @@ describe('.middleware {MIDDLEWARE}', function() {
           .get('/api/movies')
           .end(function(_err, res) {
             expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.getIndex().all).to.include('/api/movies')
+            expect(app.apicache.getIndex().all).to.include(
+              app.apicache.getKey({ method: 'get', url: '/api/movies' })
+            )
           })
 
         setTimeout(function() {
           expect(app.apicache.getIndex().all).to.have.length(0)
-          expect(callbackResponse).to.equal('/api/movies')
+          expect(callbackResponse).to.equal(
+            app.apicache.getKey({ method: 'get', url: '/api/movies' })
+          )
           done()
-        }, 25)
+        }, 40)
       })
 
       it('run provided function after cache hit', function(done) {
@@ -2229,7 +2252,10 @@ describe('Redis support', function() {
           .then(function(index) {
             expect(Object.keys(index.groups).length).to.equal(0)
             expect(index.all.length).to.equal(0)
-            return hgetallIsNull(db, '/api/testcachegroup')
+            return hgetallIsNull(
+              db,
+              app.apicache.getKey({ method: 'get', url: '/api/testcachegroup' })
+            )
           })
       })
 
@@ -2250,14 +2276,19 @@ describe('Redis support', function() {
           .then(function(index) {
             expect(index.all.length).to.equal(1)
             expect(Object.keys(index.groups).length).to.equal(1)
-            return app.apicache.clear('/api/testcachegroup').then(function() {
-              return app.apicache.getIndex()
-            })
+            return app.apicache
+              .clear(app.apicache.getKey({ method: 'get', url: '/api/testcachegroup' }))
+              .then(function() {
+                return app.apicache.getIndex()
+              })
           })
           .then(function(index) {
             expect(index.all.length).to.equal(0)
             expect(Object.keys(index.groups).length).to.equal(0)
-            return hgetallIsNull(db, '/api/movies')
+            return hgetallIsNull(
+              db,
+              app.apicache.getKey({ method: 'get', url: '/api/testcachegroup' })
+            )
           })
       })
 
@@ -2300,7 +2331,10 @@ describe('Redis support', function() {
           .then(function(index) {
             expect(index.all.length).to.equal(0)
             expect(Object.keys(index.groups).length).to.equal(0)
-            return hgetallIsNull(db, '/api/movies')
+            return hgetallIsNull(
+              db,
+              app.apicache.getKey({ method: 'get', url: '/api/testcachegroup' })
+            )
           })
       })
 
@@ -2365,11 +2399,13 @@ describe('Redis support', function() {
             var deletedKeyCount = 0
             var runOnceAfterReceivingFirstChunk = (function(memo) {
               function run(initialChunk) {
-                return app.apicache.clear('/api/bigresponse').then(function(deleteCount) {
-                  clearElapsedTime = Date.now() - then
-                  deletedKeyCount = deleteCount
-                  expect(String(initialChunk).slice(0, 5)).to.equal('aaaaa')
-                })
+                return app.apicache
+                  .clear(app.apicache.getKey({ method: 'get', url: '/api/bigresponse' }))
+                  .then(function(deleteCount) {
+                    clearElapsedTime = Date.now() - then
+                    deletedKeyCount = deleteCount
+                    expect(String(initialChunk).slice(0, 5)).to.equal('aaaaa')
+                  })
               }
               return function(chunk) {
                 if (memo) return
@@ -2509,7 +2545,9 @@ describe('Redis support', function() {
           })
           .then(function(index) {
             expect(index.all.length).to.equal(1)
-            expect(index.all[0]).to.equal('/api/slowresponse')
+            expect(index.all[0]).to.equal(
+              app.apicache.getKey({ method: 'get', url: '/api/slowresponse' })
+            )
             return request(app).get('/api/slowresponse')
           })
           .then(function(res) {
@@ -2530,6 +2568,382 @@ describe('Redis support', function() {
         return request(app)
           .get('/api/movies')
           .expect(200, movies)
+      })
+    })
+  })
+})
+
+describe('.getKey(keyParts)', function() {
+  describe('get key name from key parts', function() {
+    beforeEach(function() {
+      this.cache = require('../src/apicache').newInstance()
+    })
+
+    describe('when parts are complete', function() {
+      it('return key name (with sorted params)', function() {
+        var keyParts = {
+          method: 'HEAD',
+          url: '/api/test',
+          params: { prop2: 'val2', prop1: ['val1'] },
+          appendice: 'user:7',
+        }
+        expect(this.cache.getKey(keyParts)).to.equal(
+          'head/api/test{"prop1":["val1"],"prop2":"val2"}user:7'
+        )
+      })
+    })
+
+    describe('when parts are incomplete', function() {
+      it('return key name (keeping {} as separator)', function() {
+        var keyParts = {}
+        expect(this.cache.getKey(keyParts)).to.equal('{}')
+
+        keyParts = { url: '/' }
+        expect(this.cache.getKey(keyParts)).to.equal('/{}')
+
+        keyParts = { method: 'HEAD' }
+        expect(this.cache.getKey(keyParts)).to.equal('head{}')
+
+        keyParts = { params: { prop10: 'val10', prop1: ['val1'] } }
+        expect(this.cache.getKey(keyParts)).to.equal('{"prop1":["val1"],"prop10":"val10"}')
+
+        keyParts = { appendice: 'user:7' }
+        expect(this.cache.getKey(keyParts)).to.equal('{}user:7')
+      })
+    })
+
+    describe('when parts are absent', function() {
+      it('return empty key name', function() {
+        expect(this.cache.getKey()).to.equal('{}')
+
+        var keyParts = null
+        expect(this.cache.getKey(keyParts)).to.equal('{}')
+      })
+    })
+  })
+})
+
+describe('.set(key, value, duration, group, expirationCallback)', function() {
+  var db = redis.createClient({ prefix: 'a-prefix:' })
+  var configs = [
+    {
+      clientName: 'memory',
+      config: {},
+    },
+    {
+      clientName: 'redis',
+      config: { redisClient: db, redisPrefix: 'a-prefix:' },
+    },
+  ]
+  configs.forEach(function(meta) {
+    beforeEach(function() {
+      this.cache = require('../src/apicache').newInstance()
+    })
+
+    afterEach(function() {
+      return this.cache.clear()
+    })
+
+    describe('with ' + meta.clientName + ' cache', function() {
+      it('set item with defaultDuration', function() {
+        var that = this
+        this.cache.options({ defaultDuration: '20 ms' })
+        return this.cache
+          .set('a key', { a: 'value' })
+          .then(function(item) {
+            expect(item).to.eql({ a: 'value' })
+            return that.cache.get('a key')
+          })
+          .then(function(item) {
+            expect(item).to.eql({ a: 'value' })
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(that.cache.get('a key'))
+              }, 20)
+            })
+          })
+          .then(function(item) {
+            expect(item).to.be.null
+          })
+      })
+
+      it('set item with custom duration', function() {
+        var that = this
+        this.cache.options({ defaultDuration: '20 ms' })
+        return this.cache
+          .set('b key', { b: 'value' }, '40 ms')
+          .then(function(item) {
+            expect(item).to.eql({ b: 'value' })
+            return that.cache.get('b key')
+          })
+          .then(function(item) {
+            expect(item).to.eql({ b: 'value' })
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(that.cache.get('b key'))
+              }, 20)
+            })
+          })
+          .then(function(item) {
+            expect(item).to.eql({ b: 'value' })
+            return new Promise(function(resolve) {
+              setTimeout(function() {
+                resolve(that.cache.get('b key'))
+              }, 20)
+            })
+          })
+          .then(function(item) {
+            expect(item).to.be.null
+          })
+      })
+
+      it('set item with group', function() {
+        var that = this
+        return this.cache
+          .set('c key', { c: 'value' }, '2 seconds', 'a group')
+          .then(function(item) {
+            expect(item).to.eql({ c: 'value' })
+            return that.cache.get('c key')
+          })
+          .then(function(item) {
+            expect(item).to.eql({ c: 'value' })
+            return that.cache.clear('a group')
+          })
+          .then(function() {
+            return that.cache.get('c key')
+          })
+          .then(function(item) {
+            expect(item).to.be.null
+          })
+      })
+
+      it('set item with expirationCallback', function() {
+        var that = this
+        var callCount = 0
+        var cb = function() {
+          callCount++
+        }
+        return this.cache
+          .set('d key', { d: 'value' }, '30 ms', null, cb)
+          .then(function(item) {
+            expect(item).to.eql({ d: 'value' })
+            return that.cache.get('d key')
+          })
+          .then(function(item) {
+            expect(callCount).to.equal(0)
+            expect(item).to.eql({ d: 'value' })
+            return new Promise(function(resolve) {
+              setTimeout(resolve, 30)
+            })
+          })
+          .then(function() {
+            expect(callCount).to.equal(1)
+          })
+      })
+
+      it('can modify existing item', function() {
+        var that = this
+        return this.cache
+          .set('e key', { e: 'value' }, '50 ms')
+          .then(function(item) {
+            expect(item).to.eql({ e: 'value' })
+            return that.cache.get('e key')
+          })
+          .then(function(item) {
+            expect(item).to.eql({ e: 'value' })
+            return that.cache.set('e key', 'change is good')
+          })
+          .then(function(item) {
+            expect(item).to.equal('change is good')
+            return that.cache.get('e key')
+          })
+          .then(function(item) {
+            expect(item).to.equal('change is good')
+          })
+      })
+    })
+  })
+})
+
+describe('.has(key)', function() {
+  var db = redis.createClient({ prefix: 'a-prefix:' })
+  var configs = [
+    {
+      clientName: 'memory',
+      config: {},
+    },
+    {
+      clientName: 'redis',
+      config: { redisClient: db, redisPrefix: 'a-prefix:' },
+    },
+  ]
+
+  configs.forEach(function(meta) {
+    beforeEach(function() {
+      this.cache = require('../src/apicache').newInstance()
+    })
+
+    afterEach(function() {
+      return this.cache.clear()
+    })
+
+    describe('with ' + meta.clientName + ' cache', function() {
+      describe("when key doesn't exist", function() {
+        it('return false', function() {
+          return this.cache.has('a key').then(function(value) {
+            expect(value).to.be.false
+          })
+        })
+      })
+
+      describe('when key exists', function() {
+        describe('when key is manually set by user', function() {
+          it('return true', function() {
+            var that = this
+            return this.cache
+              .set('a key', 'a value')
+              .then(function() {
+                return that.cache.has('a key')
+              })
+              .then(function(value) {
+                expect(value).to.be.true
+              })
+          })
+        })
+
+        describe('when key is auto set by apicache middleware', function() {
+          apis.forEach(function(api) {
+            describe(api.name + ' tests', function() {
+              beforeEach(function() {
+                var mockAPI = api.server
+                var app = mockAPI.create('10 seconds')
+                this.cache = app.apicache
+                function resolveWhenKeyIsCached() {
+                  return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
+                    if (keys.all.length === 0) {
+                      return new Promise(function(resolve) {
+                        setTimeout(function() {
+                          resolve(resolveWhenKeyIsCached())
+                        }, 5)
+                      })
+                    }
+                  })
+                }
+                return request(app)
+                  .get('/api/movies')
+                  .expect(200, movies)
+                  .then(resolveWhenKeyIsCached)
+              })
+
+              if (meta.clientName === 'redis') {
+                afterEach(function(done) {
+                  db.flushdb(done)
+                })
+              }
+
+              it('return true', function() {
+                return this.cache
+                  .has(this.cache.getKey({ method: 'GET', url: '/api/movies' }))
+                  .then(function(value) {
+                    expect(value).to.be.true
+                  })
+              })
+            })
+          })
+        })
+      })
+    })
+  })
+})
+
+describe('.get(keyParts)', function() {
+  var db = redis.createClient({ prefix: 'a-prefix:' })
+  var configs = [
+    {
+      clientName: 'memory',
+      config: {},
+    },
+    {
+      clientName: 'redis',
+      config: { redisClient: db, redisPrefix: 'a-prefix:' },
+    },
+  ]
+
+  configs.forEach(function(meta) {
+    beforeEach(function() {
+      this.cache = require('../src/apicache').newInstance()
+    })
+
+    afterEach(function() {
+      return this.cache.clear()
+    })
+
+    describe('with ' + meta.clientName + ' cache', function() {
+      describe("when key doesn't exist", function() {
+        it('return null', function() {
+          return this.cache.get('a key').then(function(value) {
+            expect(value).to.be.null
+          })
+        })
+      })
+
+      describe('when key exists', function() {
+        describe('when key is manually set by user', function() {
+          it("returns it's value", function() {
+            var that = this
+            return this.cache
+              .set('a key', 'a value')
+              .then(function() {
+                return that.cache.get('a key')
+              })
+              .then(function(value) {
+                expect(value).to.be.equal('a value')
+              })
+          })
+        })
+
+        describe('when key is auto set by apicache middleware', function() {
+          apis.forEach(function(api) {
+            describe(api.name + ' tests', function() {
+              beforeEach(function() {
+                var mockAPI = api.server
+                var app = mockAPI.create('10 seconds')
+                this.cache = app.apicache
+                function resolveWhenKeyIsCached() {
+                  return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
+                    if (keys.all.length === 0) {
+                      return new Promise(function(resolve) {
+                        setTimeout(function() {
+                          resolve(resolveWhenKeyIsCached())
+                        }, 5)
+                      })
+                    }
+                  })
+                }
+                return request(app)
+                  .get('/api/movies')
+                  .expect(200, movies)
+                  .then(resolveWhenKeyIsCached)
+              })
+
+              if (meta.clientName === 'redis') {
+                afterEach(function(done) {
+                  db.flushdb(done)
+                })
+              }
+
+              it("return it's formatted value", function() {
+                return this.cache
+                  .get(this.cache.getKey({ method: 'GET', url: '/api/movies' }))
+                  .then(function(value) {
+                    expect(value.status).to.equal(200)
+                    expect(value.headers['cache-control']).to.equal('max-age=10, must-revalidate')
+                    expect(value.data).to.eql(movies)
+                  })
+              })
+            })
+          })
+        })
       })
     })
   })
@@ -2567,7 +2981,10 @@ describe('.clear(key?) {SETTER}', function() {
           .then(function(res) {
             expect(app.requestsProcessed).to.equal(1)
             expect(app.apicache.getIndex().all.length).to.equal(1)
-            expect(app.apicache.clear('/api/movies').all.length).to.equal(0)
+            expect(
+              app.apicache.clear(app.apicache.getKey({ method: 'get', url: '/api/movies' })).all
+                .length
+            ).to.equal(0)
           })
       })
 
@@ -2580,7 +2997,13 @@ describe('.clear(key?) {SETTER}', function() {
             expect(app.requestsProcessed).to.equal(1)
             expect(app.apicache.getIndex().all.length).to.equal(1)
             expect(app.apicache.getIndex().groups.cachegroup.length).to.equal(1)
-            expect(Object.keys(app.apicache.clear('/api/testcachegroup').groups).length).to.equal(0)
+            expect(
+              Object.keys(
+                app.apicache.clear(
+                  app.apicache.getKey({ method: 'get', url: '/api/testcachegroup' })
+                ).groups
+              ).length
+            ).to.equal(0)
             expect(app.apicache.getIndex().all.length).to.equal(0)
           })
       })

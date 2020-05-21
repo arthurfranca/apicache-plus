@@ -181,7 +181,6 @@ MemoryCache.prototype.createReadStream = function(_key, data, encoding, highWate
 MemoryCache.prototype.add = function(key, value, time, timeoutCallback) {
   var instance = this
 
-  value.key = key
   var entry = {
     value: value,
     expire: time + Date.now(),
@@ -208,6 +207,10 @@ MemoryCache.prototype.delete = function(key) {
   this.size = Object.keys(this.cache).length
 
   return null
+}
+
+MemoryCache.prototype.has = function(key) {
+  return Promise.resolve(key in this.cache)
 }
 
 MemoryCache.prototype.get = function(key) {

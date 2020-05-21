@@ -458,15 +458,63 @@ RedisCache.prototype.clear = function(target) {
   })
 }
 
+RedisCache.prototype.add = function(key, value, time, timeoutCallback, group) {
+  var that = this
+  return new Promise(function(resolve, reject) {
+    if (typeof value !== 'string' && !Buffer.isBuffer(value)) {
+      try {
+        if (value === undefined) value = Buffer.alloc(0)
+        else value = JSON.stringify(value)
+      } catch (err) {
+        value = String(value)
+      }
+    }
+    var expire = time + Date.now()
+    var multi = that.redis
+      .multi()
+      .hset(key, 'value', value)
+      .expireat(expire)
+    if (group) {
+      multi.hset(key, 'group', group).sadd('group:' + group, key)
+    }
+
+    multi.exec(function(err, res) {
+      if (err || res === null) return reject(err)
+
+      if (timeoutCallback && typeof timeoutCallback === 'function') {
+        that.timers[key] = setTimeout(function() {
+          that.debug('clearing expired entry for "' + key + '"')
+          timeoutCallback(value, key)
+        }, time)
+      }
+      resolve({
+        value: value,
+        expire: expire,
+        timeout: that.timers[key],
+      })
+    })
+  })
+}
+
+RedisCache.prototype.has = function(key) {
+  var that = this
+  return new Promise(function(resolve) {
+    that.redis.exists(key, function(err, res) {
+      resolve(!err && res === 1)
+    })
+  })
+}
+
 RedisCache.prototype.get = function(key) {
   var that = this
   return this.getValue(key).then(function(value) {
-    if (value === null) return { value: value }
+    var wasManuallyStoredByUserCallingSetMethod = typeof value !== 'object' || !value['data-token']
+    if (value === null || wasManuallyStoredByUserCallingSetMethod) return { value: value }
 
     return new Promise(function(resolve, reject) {
       that.redis.getBuffer('data:' + value['data-token'] + ':' + key, function(err, data) {
         if (err) return reject(err)
-        if (data !== null) value.data = data
+        value.data = data // Can be null; yet, 'data' property must be present
 
         that.redis.pttl(key, function(err, time) {
           if (err) return reject(err)
@@ -491,7 +539,9 @@ RedisCache.prototype.getValue = function(key) {
       else {
         // ioredis hgetall empty value is {}, while node-redis is null
         if (value && Object.keys(value).length > 0) {
-          value.key = key
+          var wasManuallyStoredByUserCallingSetMethod = 'value' in value
+          if (wasManuallyStoredByUserCallingSetMethod) return value.value
+
           value.headers = JSON.parse(value.headers)
           value.status = parseInt(value.status, 10)
           value.timestamp = parseFloat(value.timestamp)
