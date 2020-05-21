@@ -293,7 +293,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 3600000,
         enabled: true,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
@@ -309,7 +309,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 3600000,
         enabled: true,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['test'],
         jsonp: false,
         redisClient: false,
@@ -330,7 +330,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       function afterHit() {}
       var middleware1 = apicache.middleware('10 seconds', null, {
         debug: true,
-        isBypassable: false,
+        isBypassable: true,
         defaultDuration: 7200000,
         appendKey: ['bar'],
         statusCodes: { include: [], exclude: ['400'] },
@@ -351,7 +351,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: true,
         defaultDuration: 7200000,
         enabled: true,
-        isBypassable: false,
+        isBypassable: true,
         appendKey: ['bar'],
         jsonp: false,
         redisClient: false,
@@ -369,7 +369,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -404,7 +404,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 7200000,
         enabled: true,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -420,7 +420,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -464,7 +464,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: false,
         defaultDuration: 1800000,
         enabled: true,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -482,7 +482,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         debug: true,
         defaultDuration: 450000,
         enabled: false,
-        isBypassable: true,
+        isBypassable: false,
         appendKey: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -820,7 +820,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('skips cache when using header "cache-control: no-store"', function() {
-        var app = mockAPI.create('10 seconds')
+        var app = mockAPI.create('10 seconds', { isBypassable: true })
 
         return request(app)
           .get('/api/movies')
@@ -842,7 +842,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('skips cache when using header "x-apicache-bypass"', function() {
-        var app = mockAPI.create('10 seconds')
+        var app = mockAPI.create('10 seconds', { isBypassable: true })
 
         return request(app)
           .get('/api/movies')
@@ -864,7 +864,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       it('skips cache when using header "x-apicache-force-fetch (legacy)"', function() {
-        var app = mockAPI.create('10 seconds')
+        var app = mockAPI.create('10 seconds', { isBypassable: true })
 
         return request(app)
           .get('/api/movies')

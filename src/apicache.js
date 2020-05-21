@@ -69,7 +69,7 @@ function ApiCache() {
     debug: false,
     defaultDuration: 3600000,
     enabled: true,
-    isBypassable: true,
+    isBypassable: false,
     appendKey: null,
     jsonp: false,
     redisClient: false,
