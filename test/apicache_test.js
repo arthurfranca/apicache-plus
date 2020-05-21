@@ -149,6 +149,9 @@ describe('.getDuration(stringOrNumber) {GETTER}', function() {
     it('months', function() {
       expect(apicache.getDuration('6 months')).to.equal(1000 * 60 * 60 * 24 * 30 * 6)
     })
+    it('years', function() {
+      expect(apicache.getDuration('3 years')).to.equal(1000 * 60 * 60 * 24 * 365 * 3)
+    })
   })
 })
 
