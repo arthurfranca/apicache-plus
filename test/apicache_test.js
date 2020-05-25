@@ -280,6 +280,259 @@ describe('.middleware {MIDDLEWARE}', function() {
     expect(middleware.length).to.equal(3)
   })
 
+  describe('get key name from request properties', function() {
+    describe('when parts are complete', function() {
+      beforeEach(function() {
+        this.cache = require('../src/apicache').newInstance()
+        this.app = express()
+        this.app.requestsProcessed = 0
+        this.app.get(
+          '/api/getkey',
+          function(req, _res, next) {
+            req.query = { a: 1, b: [2] }
+            req.body = { a: 3, c: 'hi' }
+            next()
+          },
+          this.cache('2 seconds', null, {
+            append: function(req) {
+              return req.query.a * 10
+            },
+          }),
+          function(req, res) {
+            this.app.requestsProcessed++
+            res.json(movies)
+          }.bind(this)
+        )
+      })
+
+      afterEach(function() {
+        this.app.requestsProcessed = 0
+      })
+
+      it('cache with name from parts (with sorted params)', function() {
+        var that = this
+        var keyParts = {
+          method: 'GET',
+          url: '/api/getkey',
+          params: { a: 3, b: [2], c: 'hi' },
+          appendice: 10,
+        }
+        var key = this.cache.getKey(keyParts)
+        expect(key).to.equal('get/api/getkey{"a":3,"b":[2],"c":"hi"}10')
+
+        return request(this.app)
+          .get('/api/getkey')
+          .expect(200, movies)
+          .then(function() {
+            expect(that.app.requestsProcessed).to.equal(1)
+            return that.cache.get(key)
+          })
+          .then(function(value) {
+            expect(value.status).to.equal(200)
+            expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+            expect(value.data).to.eql(movies)
+            return request(that.app)
+              .get('/api/getkey')
+              .expect(200, movies)
+          })
+          .then(function() {
+            expect(that.app.requestsProcessed).to.equal(1)
+          })
+      })
+    })
+
+    describe('when parts are incomplete', function() {
+      beforeEach(function() {
+        this.cache = require('../src/apicache').newInstance()
+        this.app = express()
+        this.app.requestsProcessed = 0
+        this.app.get(
+          '/api/getkey',
+          this.cache('2 seconds'),
+          function(req, res) {
+            this.app.requestsProcessed++
+            res.json(movies)
+          }.bind(this)
+        )
+      })
+
+      afterEach(function() {
+        this.app.requestsProcessed = 0
+      })
+
+      it('return key name (keeping {} as separator)', function() {
+        var that = this
+        var keyParts = {
+          method: 'GET',
+          url: '/api/getkey',
+        }
+        var key = this.cache.getKey(keyParts)
+        expect(this.cache.getKey(keyParts)).to.equal('get/api/getkey{}')
+
+        return request(this.app)
+          .get('/api/getkey')
+          .expect(200, movies)
+          .then(function() {
+            expect(that.app.requestsProcessed).to.equal(1)
+            return that.cache.get(key)
+          })
+          .then(function(value) {
+            expect(value.status).to.equal(200)
+            expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+            expect(value.data).to.eql(movies)
+            return request(that.app)
+              .get('/api/getkey')
+              .expect(200, movies)
+          })
+          .then(function() {
+            expect(that.app.requestsProcessed).to.equal(1)
+          })
+      })
+    })
+
+    describe('with options.interceptKeyParts', function() {
+      beforeEach(function() {
+        this.cache = require('../src/apicache').newInstance()
+        this.app = express()
+        this.app.requestsProcessed = 0
+        this.app.get(
+          '/api/getkeyinterception',
+          this.cache(),
+          function(req, res) {
+            this.app.requestsProcessed++
+            res.json(movies)
+          }.bind(this)
+        )
+      })
+
+      afterEach(function() {
+        this.app.requestsProcessed = 0
+      })
+
+      describe('returning new key parts', function() {
+        beforeEach(function() {
+          this.app.get(
+            '/api/getkey',
+            function(req, _res, next) {
+              req.query = { a: 1, b: [2] }
+              req.body = { a: 3, c: 'hi' }
+              next()
+            },
+            this.cache('2 seconds', null, {
+              append: function(req) {
+                return req.query.a * 10
+              },
+              interceptKeyParts: function(req, res, parts) {
+                return { method: parts.method, url: parts.url + 'interception' }
+              },
+            }),
+            function(req, res) {
+              this.app.requestsProcessed++
+              res.json(movies)
+            }.bind(this)
+          )
+        })
+
+        it('can use intercepted key parts', function() {
+          var that = this
+          var keyParts = {
+            method: 'GET',
+            url: '/api/getkeyinterception',
+          }
+          var key = this.cache.getKey(keyParts)
+          expect(key).to.equal('get/api/getkeyinterception{}')
+
+          return request(this.app)
+            .get('/api/getkey')
+            .expect(200, movies)
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return that.cache.get(key)
+            })
+            .then(function(value) {
+              expect(value.status).to.equal(200)
+              expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+              expect(value.data).to.eql(movies)
+              return request(that.app)
+                .get('/api/getkeyinterception')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return request(that.app)
+                .get('/api/getkey')
+                .expect(200, movies)
+            })
+            .then(function(value) {
+              expect(that.app.requestsProcessed).to.equal(1)
+            })
+        })
+      })
+
+      describe('mutating key parts', function() {
+        beforeEach(function() {
+          this.app.get(
+            '/api/getkey',
+            function(req, _res, next) {
+              req.query = { a: 1, b: [2] }
+              req.body = { a: 3, c: 'hi' }
+              next()
+            },
+            this.cache('2 seconds', null, {
+              append: function(req) {
+                return req.query.a * 10
+              },
+              interceptKeyParts: function(req, res, parts) {
+                parts.url = parts.url + 'interception'
+                parts.params = null
+                parts.appendice = null
+              },
+            }),
+            function(req, res) {
+              this.app.requestsProcessed++
+              res.json(movies)
+            }.bind(this)
+          )
+        })
+
+        it('can use intercepted key parts', function() {
+          var that = this
+          var keyParts = {
+            method: 'GET',
+            url: '/api/getkeyinterception',
+          }
+          var key = this.cache.getKey(keyParts)
+          expect(key).to.equal('get/api/getkeyinterception{}')
+
+          return request(this.app)
+            .get('/api/getkey')
+            .expect(200, movies)
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return that.cache.get(key)
+            })
+            .then(function(value) {
+              expect(value.status).to.equal(200)
+              expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+              expect(value.data).to.eql(movies)
+              return request(that.app)
+                .get('/api/getkeyinterception')
+                .expect(200, movies)
+            })
+            .then(function() {
+              expect(that.app.requestsProcessed).to.equal(1)
+              return request(that.app)
+                .get('/api/getkey')
+                .expect(200, movies)
+            })
+            .then(function(value) {
+              expect(that.app.requestsProcessed).to.equal(1)
+            })
+        })
+      })
+    })
+  })
+
   describe('options', function() {
     var apicache = require('../src/apicache').newInstance()
 
@@ -294,6 +547,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 3600000,
         enabled: true,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['test'],
         jsonp: false,
         redisClient: false,
@@ -310,6 +564,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 3600000,
         enabled: true,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['test'],
         jsonp: false,
         redisClient: false,
@@ -331,6 +586,7 @@ describe('.middleware {MIDDLEWARE}', function() {
       var middleware1 = apicache.middleware('10 seconds', null, {
         debug: true,
         isBypassable: true,
+        interceptKeyParts: null,
         defaultDuration: 7200000,
         append: ['bar'],
         statusCodes: { include: [], exclude: ['400'] },
@@ -352,6 +608,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 7200000,
         enabled: true,
         isBypassable: true,
+        interceptKeyParts: null,
         append: ['bar'],
         jsonp: false,
         redisClient: false,
@@ -370,6 +627,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 1800000,
         enabled: true,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -405,6 +663,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 7200000,
         enabled: true,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -421,6 +680,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 1800000,
         enabled: true,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -465,6 +725,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 1800000,
         enabled: true,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -483,6 +744,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         defaultDuration: 450000,
         enabled: false,
         isBypassable: false,
+        interceptKeyParts: null,
         append: ['foo'],
         jsonp: false,
         redisClient: false,
@@ -1675,100 +1937,401 @@ describe('.middleware {MIDDLEWARE}', function() {
       })
 
       describe('can attach many apicache middlewares to same route', function() {
-        beforeEach(function() {
-          var cache = apicache.newInstance({ enabled: true }).middleware
-          this.app = mockAPI.create(null, { enabled: false })
-          this.skippingMiddleware = cache('2 seconds', function(req) {
-            return req.path !== '/sameroute'
-          })
-          this.regularMiddleware = cache('2 seconds', function(req) {
-            return req.path === '/sameroute'
-          })
-          this.otherRegularMiddleware = cache('2 seconds', null)
-          this.responseBody = { i: 'am' }
-          this.respond = function(_req, res) {
-            this.app.requestsProcessed++
-            res.json(this.responseBody)
-          }.bind(this)
-        })
+        var responseBody = "{ i: 'am' }"
+        var respondWithWriteHeadFirst = function(_req, res) {
+          this.app.requestsProcessed++
+          res.writeHead(200)
+          res.write(this.responseBody)
+          res.end()
+        }
 
-        it('starting with a bypass toggle', function() {
-          var that = this
-          this.app.get(
-            '/sameroute',
-            this.otherRegularMiddleware,
-            this.regularMiddleware,
-            // this is starting one cause patched res functions gets called at reverse order
-            this.skippingMiddleware,
-            this.respond
-          )
+        var otherResponseBody = { i: 'am' }
+        var respondWithWriteFirst = function(_req, res) {
+          this.app.requestsProcessed++
+          res.setHeader('Content-Type', 'application/json')
+          res.write(JSON.stringify(this.responseBody))
+          res.end()
+        }
 
-          return request(this.app)
-            .get('/sameroute')
-            .expect(200, this.responseBody)
-            .then(function() {
-              expect(that.app.requestsProcessed).to.equal(1)
-              return new Promise(function(resolve) {
-                setTimeout(function() {
-                  resolve(
-                    request(that.app)
-                      .get('/sameroute')
-                      .expect(200, that.responseBody)
-                  )
-                }, 10)
+        // tested restify version will duplicate body when doing res.end(body)
+        var anotherResponseBody = /restify/.test(api.name) ? '' : 'hello'
+        var respondWithEndFirst = function(_req, res) {
+          this.app.requestsProcessed++
+          res.end(this.responseBody)
+        }
+
+        ;[
+          { body: responseBody, fn: respondWithWriteHeadFirst, desc: 'calling writeHead first' },
+          { body: otherResponseBody, fn: respondWithWriteFirst, desc: 'calling write first' },
+          { body: anotherResponseBody, fn: respondWithEndFirst, desc: 'calling write end' },
+        ].forEach(function(testConfig) {
+          describe(testConfig.desc, function() {
+            beforeEach(function() {
+              apicache = apicache.newInstance({ enabled: true })
+              var cache = apicache.middleware
+              // server: 'restify' or 'x-powered-by': 'Express'
+              this.serverHeader = /restify/.test(api.name) ? 'server' : 'x-powered-by'
+              this.serverHeaderValue = /restify/.test(api.name) ? 'restify' : 'Express'
+              this.app = mockAPI.create(null, { enabled: false })
+              this.skippingMiddleware = cache('2 seconds', function(req) {
+                return req.url !== '/sameroute'
               })
+              this.regularMiddleware = cache(
+                '2 seconds',
+                function(req) {
+                  return req.url === '/sameroute'
+                },
+                {
+                  append: function(req) {
+                    return req.url[req.url.length - 1].toUpperCase()
+                  },
+                  headerBlacklist: [this.serverHeader],
+                }
+              )
+              this.otherRegularMiddleware = cache('2 seconds', null)
+              this.responseBody = testConfig.body
+              this.respond = testConfig.fn.bind(this)
             })
-            .then(function() {
-              expect(that.app.requestsProcessed).to.equal(1)
-            })
-        })
 
-        it('not starting with a bypass toggle', function() {
-          var that = this
-          this.app.get(
-            '/sameroute',
-            this.otherRegularMiddleware,
-            this.skippingMiddleware,
-            this.regularMiddleware,
-            this.respond
-          )
+            it('starting with a bypass toggle', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.otherRegularMiddleware,
+                this.regularMiddleware,
+                // this is starting one cause patched res functions gets called at reverse order
+                this.skippingMiddleware,
+                this.respond
+              )
 
-          return request(this.app)
-            .get('/sameroute')
-            .expect(200, this.responseBody)
-            .then(function() {
-              expect(that.app.requestsProcessed).to.equal(1)
-              return request(that.app)
+              return request(this.app)
                 .get('/sameroute')
-                .expect(200, that.responseBody)
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                  return apicache.get('get/sameroute{}')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                })
             })
-            .then(function() {
-              expect(that.app.requestsProcessed).to.equal(1)
-            })
-        })
 
-        it('ending with a bypass toggle', function() {
-          var that = this
-          this.app.get(
-            '/sameroute',
-            this.skippingMiddleware,
-            this.regularMiddleware,
-            this.otherRegularMiddleware,
-            this.respond
-          )
+            it('starting with a bypass toggle v2', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.regularMiddleware,
+                this.otherRegularMiddleware,
+                this.skippingMiddleware,
+                this.respond
+              )
 
-          return request(this.app)
-            .get('/sameroute')
-            .expect(200, this.responseBody)
-            .then(function() {
-              expect(that.app.requestsProcessed).to.equal(1)
-              return request(that.app)
+              return request(this.app)
                 .get('/sameroute')
-                .expect(200, that.responseBody)
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                  return apicache.get('get/sameroute{}E')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.be.undefined
+                })
             })
-            .then(function(res) {
-              return expect(that.app.requestsProcessed).to.equal(1)
+
+            it('not starting with a bypass toggle', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.regularMiddleware,
+                this.skippingMiddleware,
+                this.otherRegularMiddleware,
+                this.respond
+              )
+
+              return request(this.app)
+                .get('/sameroute')
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                  return apicache.get('get/sameroute{}E')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.be.undefined
+                })
             })
+
+            it('not starting with a bypass toggle v2', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.otherRegularMiddleware,
+                this.skippingMiddleware,
+                this.regularMiddleware,
+                this.respond
+              )
+
+              return request(this.app)
+                .get('/sameroute')
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                  return apicache.get('get/sameroute{}')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                })
+            })
+
+            it('ending with a bypass toggle', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.skippingMiddleware,
+                this.regularMiddleware,
+                this.otherRegularMiddleware,
+                this.respond
+              )
+
+              return request(this.app)
+                .get('/sameroute')
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                  return apicache.get('get/sameroute{}E')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.be.undefined
+                })
+            })
+
+            it('ending with a bypass toggle v2', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.skippingMiddleware,
+                this.otherRegularMiddleware,
+                this.regularMiddleware,
+                this.respond
+              )
+
+              return request(this.app)
+                .get('/sameroute')
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                  return apicache.get('get/sameroute{}')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                })
+            })
+
+            it('starting and ending with a bypass toggle', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.skippingMiddleware,
+                this.otherRegularMiddleware,
+                this.regularMiddleware,
+                this.skippingMiddleware,
+                this.respond
+              )
+
+              return request(this.app)
+                .get('/sameroute')
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
+                  return apicache.get('get/sameroute{}')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                })
+            })
+
+            it('starting with a bypass toggle v2', function() {
+              var that = this
+              this.app.get(
+                '/sameroute',
+                this.skippingMiddleware,
+                this.regularMiddleware,
+                this.otherRegularMiddleware,
+                this.skippingMiddleware,
+                this.respond
+              )
+
+              return request(this.app)
+                .get('/sameroute')
+                .expect(200, this.responseBody)
+                .expect('Cache-Control', /max-age/)
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      expect(apicache.getIndex().all.length).to.equal(1)
+                      expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                      resolve(
+                        request(that.app)
+                          .get('/sameroute')
+                          .expect(200, that.responseBody)
+                          .expect('Cache-Control', /max-age/)
+                      )
+                    }, 10)
+                  })
+                })
+                .then(function(res) {
+                  expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(that.app.requestsProcessed).to.equal(1)
+                  expect(apicache.getIndex().all.length).to.equal(1)
+                  expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
+                  return apicache.get('get/sameroute{}E')
+                })
+                .then(function(value) {
+                  expect(value.headers[that.serverHeader]).to.be.undefined
+                })
+            })
+          })
         })
       })
 
@@ -2619,6 +3182,16 @@ describe('.getKey(keyParts)', function() {
         var keyParts = null
         expect(this.cache.getKey(keyParts)).to.equal('{}')
       })
+    })
+
+    it('help with slightly incorrect url', function() {
+      var correctKey = this.cache.getKey({ url: '/test ' })
+      expect(correctKey).to.equal('/test{}')
+      expect(this.cache.getKey({ url: ' /test/ ' })).to.equal(correctKey)
+
+      correctKey = this.cache.getKey({ url: '/' })
+      expect(correctKey).to.equal('/{}')
+      expect(this.cache.getKey({ url: ' ' })).to.equal(correctKey)
     })
   })
 })
