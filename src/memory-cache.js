@@ -10,7 +10,7 @@ function MemoryCache() {
   this.lockWithId = {}
 }
 
-var DEFAULT_LOCK_PTTL = 30 * 1000 // 30s will be the response init limit
+var DEFAULT_LOCK_PTTL = 60 * 1000 // 60s will be the response init limit
 MemoryCache.prototype.acquireLockWithId = function(key, id, pttl) {
   var that = this
   var lock = that.lockWithId[key]

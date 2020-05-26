@@ -87,6 +87,7 @@ function ApiCache() {
     headers: {
       // 'cache-control':  'no-cache' // example of header overwrite
     },
+    shouldSyncExpiration: false,
     afterHit: null,
     trackPerformance: false,
   }
@@ -172,7 +173,7 @@ function ApiCache() {
       headers: filterBlacklistedHeaders(headers, options),
       data: data,
       encoding: encoding,
-      timestamp: new Date().getTime() / 1000, // seconds since epoch.  This is used to properly decrement max-age headers in cached responses.
+      timestamp: Date.now(), // This is used to properly decrement max-age headers in cached responses
     }
   }
 
@@ -256,6 +257,15 @@ function ApiCache() {
     }
   }
 
+  function getCacheControlMaxAge(syncedMaxAge, group, shouldSyncExpiration) {
+    var maxAge
+    if (group) maxAge = Math.min(3, syncedMaxAge)
+    else if (!shouldSyncExpiration) maxAge = Math.min(30, syncedMaxAge)
+    else maxAge = syncedMaxAge
+
+    return 'max-age=' + maxAge.toFixed(0) + ', must-revalidate'
+  }
+
   function makeResponseCacheable(
     req,
     res,
@@ -305,12 +315,14 @@ function ApiCache() {
           SAFE_HTTP_METHODS.indexOf(req.method) !== -1 &&
           shouldCacheRes(req, res, toggle, options)
         ) {
-          res.setHeader(
-            'cache-control',
-            'max-age=' +
-              (req.apicacheGroup ? 3 : (duration / 1000).toFixed(0)) +
-              ', must-revalidate'
+          var cacheControl
+          var syncedMaxAge = Math.ceil(duration / 1000)
+          cacheControl = getCacheControlMaxAge(
+            syncedMaxAge,
+            req.apicacheGroup,
+            options.shouldSyncExpiration
           )
+          res.setHeader('cache-control', cacheControl)
         } else {
           res.setHeader('cache-control', 'no-store')
         }
@@ -498,20 +510,29 @@ function ApiCache() {
     var headers = getSafeHeaders(response)
     var cacheObjectHeaders = cacheObject.headers || {}
 
-    var updatedMaxAge = parseInt(
-      duration / 1000 - (new Date().getTime() / 1000 - cacheObject.timestamp),
-      10
-    )
+    var cacheControl
+    // sync max-age with the cache expiration.
+    var elapsedMs = Date.now() - cacheObject.timestamp
+    var updatedMaxAge = Math.ceil((duration - elapsedMs) / 1000)
+    // when caching with options.interceptKeyParts,
+    // same key/cache could be reused for responding
+    // with different middleware options.headers
+    // and to different request methods, so recheck
+    if (options.headers['cache-control']) cacheControl = options.headers['cache-control']
+    else if (SAFE_HTTP_METHODS.indexOf(request.method) !== -1) {
+      if (cacheObjectHeaders['cache-control']) cacheControl = cacheObjectHeaders['cache-control']
+      else {
+        cacheControl = getCacheControlMaxAge(
+          updatedMaxAge,
+          request.apicacheGroup,
+          options.shouldSyncExpiration
+        )
+      }
+    } else cacheControl = 'no-store'
 
     Object.assign(headers, filterBlacklistedHeaders(cacheObjectHeaders, options), {
-      // set properly-decremented max-age header. This ensures that max-age is in sync with the cache expiration.
-      'cache-control': (
-        cacheObjectHeaders['cache-control'] ||
-        (SAFE_HTTP_METHODS.indexOf(request.method) !== -1
-          ? 'max-age=' + updatedMaxAge + ', must-revalidate'
-          : 'no-store')
-      ).replace(/max-age=\s*([+-]?\d+)/, function(_match, cachedMaxAge) {
-        return 'max-age=' + Math.max(0, Math.min(parseInt(cachedMaxAge, 10), updatedMaxAge))
+      'cache-control': cacheControl.replace(/max-age=\s*([+-]?\d+)/, function(_match, maxAge) {
+        return 'max-age=' + Math.max(0, Math.min(parseInt(maxAge, 10), updatedMaxAge))
       }),
     })
 
@@ -781,7 +802,7 @@ function ApiCache() {
       if (
         cached === null ||
         typeof cached !== 'object' ||
-        !['status', 'headers', 'data'].every(function(k) {
+        !['status', 'headers', 'data', 'encoding', 'timestamp'].every(function(k) {
           return k in cached
         })
       ) {
@@ -798,11 +819,14 @@ function ApiCache() {
           } catch (err) {}
         }
 
-        // don't send with all properties if it's really what apicache regularly stores
+        // don't send with all properties
+        // (e.g. encoding as it was already used above for parsing and redis data-extra-pttl prop)
+        // if it's really what apicache regularly stores
         return {
           status: cached.status,
           headers: cached.headers,
           data: data,
+          timestamp: cached.timestamp,
         }
       } catch (err) {
         return cached

@@ -395,7 +395,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         this.cache = require('../src/apicache').newInstance()
         this.app = express()
         this.app.requestsProcessed = 0
-        this.app.get(
+        this.app.post(
           '/api/getkeyinterception',
           this.cache(),
           function(req, res) {
@@ -423,7 +423,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 return req.query.a * 10
               },
               interceptKeyParts: function(req, res, parts) {
-                return { method: parts.method, url: parts.url + 'interception' }
+                return { method: 'POST', url: parts.url + 'interception' }
               },
             }),
             function(req, res) {
@@ -436,14 +436,15 @@ describe('.middleware {MIDDLEWARE}', function() {
         it('can use intercepted key parts', function() {
           var that = this
           var keyParts = {
-            method: 'GET',
+            method: 'POST',
             url: '/api/getkeyinterception',
           }
           var key = this.cache.getKey(keyParts)
-          expect(key).to.equal('get/api/getkeyinterception{}')
+          expect(key).to.equal('post/api/getkeyinterception{}')
 
           return request(this.app)
             .get('/api/getkey')
+            .expect('Cache-Control', 'max-age=2, must-revalidate')
             .expect(200, movies)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -454,13 +455,15 @@ describe('.middleware {MIDDLEWARE}', function() {
               expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
               expect(value.data).to.eql(movies)
               return request(that.app)
-                .get('/api/getkeyinterception')
+                .post('/api/getkeyinterception')
+                .expect('Cache-Control', 'no-store')
                 .expect(200, movies)
             })
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
               return request(that.app)
                 .get('/api/getkey')
+                .expect('Cache-Control', 'max-age=2, must-revalidate')
                 .expect(200, movies)
             })
             .then(function(value) {
@@ -483,9 +486,10 @@ describe('.middleware {MIDDLEWARE}', function() {
                 return req.query.a * 10
               },
               interceptKeyParts: function(req, res, parts) {
+                parts.method = 'post'
                 parts.url = parts.url + 'interception'
                 parts.params = null
-                parts.appendice = null
+                delete parts.appendice
               },
             }),
             function(req, res) {
@@ -498,14 +502,15 @@ describe('.middleware {MIDDLEWARE}', function() {
         it('can use intercepted key parts', function() {
           var that = this
           var keyParts = {
-            method: 'GET',
+            method: 'post',
             url: '/api/getkeyinterception',
           }
           var key = this.cache.getKey(keyParts)
-          expect(key).to.equal('get/api/getkeyinterception{}')
+          expect(key).to.equal('post/api/getkeyinterception{}')
 
           return request(this.app)
             .get('/api/getkey')
+            .expect('Cache-Control', 'max-age=2, must-revalidate')
             .expect(200, movies)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -516,13 +521,15 @@ describe('.middleware {MIDDLEWARE}', function() {
               expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
               expect(value.data).to.eql(movies)
               return request(that.app)
-                .get('/api/getkeyinterception')
+                .post('/api/getkeyinterception')
+                .expect('Cache-Control', 'no-store')
                 .expect(200, movies)
             })
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
               return request(that.app)
                 .get('/api/getkey')
+                .expect('Cache-Control', 'max-age=2, must-revalidate')
                 .expect(200, movies)
             })
             .then(function(value) {
@@ -556,6 +563,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -573,6 +581,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -619,6 +628,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        shouldSyncExpiration: false,
         afterHit: afterHit,
         trackPerformance: false,
       })
@@ -636,6 +646,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
         headers: {},
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -672,6 +683,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['400'] },
         events: { expire: undefined },
         headers: {},
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -689,6 +701,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: ['200'] },
         events: { expire: undefined },
         headers: {},
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -736,6 +749,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         headers: {
           'cache-control': 'no-cache',
         },
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -753,6 +767,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         statusCodes: { include: [], exclude: [] },
         events: { expire: undefined },
         headers: {},
+        shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
       })
@@ -981,7 +996,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .catch(function(err) {
                   done(err)
                 })
-            }, 500)
+            }, 1000)
           })
       })
       ;['post', 'put', 'patch', api.name.indexOf('restify') !== -1 ? 'del' : 'delete'].forEach(
@@ -1038,36 +1053,30 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .catch(function(err) {
                   done(err)
                 })
-            }, 500)
+            }, 1000)
           })
       })
 
-      it('returns overwritten max-age header when lower than cache duration', function(done) {
+      it('returns overwritten max-age header when lower than cache duration', function() {
         var app = mockAPI.create('10 seconds', { headers: { 'cache-control': 'max-age=5' } })
 
-        request(app)
+        return request(app)
           .get('/api/movies')
           .expect(200, movies)
           .expect('Cache-Control', 'max-age=5')
-          .then(function(res) {
-            setTimeout(function() {
-              request(app)
-                .get('/api/movies')
-                .expect(200, movies)
-                .expect('Cache-Control', 'max-age=5')
-                .then(function() {
-                  expect(app.requestsProcessed).to.equal(1)
-                  done()
-                })
-                .catch(function(err) {
-                  done(err)
-                })
-            }, 500)
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect(200, movies)
+              .expect('Cache-Control', 'max-age=5')
+              .then(function() {
+                expect(app.requestsProcessed).to.equal(1)
+              })
           })
       })
 
       it('return a low max-age when apicacheGroup is set', function() {
-        var app = mockAPI.create('2 seconds')
+        var app = mockAPI.create('10 seconds')
 
         return request(app)
           .get('/api/testcachegroup')
@@ -1077,7 +1086,40 @@ describe('.middleware {MIDDLEWARE}', function() {
           .then(function() {
             return request(app)
               .get('/api/testcachegroup')
-              .expect('Cache-Control', 'max-age=1, must-revalidate')
+              .expect('Cache-Control', 'max-age=3, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      it('return 30s max-age when syncing is off', function() {
+        var app = mockAPI.create('40 seconds')
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'max-age=30, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'max-age=30, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      it('return regular max-age when syncing is on', function() {
+        var app = mockAPI.create('40 seconds', { shouldSyncExpiration: true })
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'max-age=40, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'max-age=40, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
           })
       })
 

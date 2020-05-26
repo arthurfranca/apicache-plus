@@ -35,7 +35,7 @@ function RedisCache(options, debug) {
   }
 }
 
-var DEFAULT_LOCK_PTTL = 30 * 1000 // 30s will be the response init limit
+var DEFAULT_LOCK_PTTL = 60 * 1000 // 60s will be the response init limit
 RedisCache.prototype._acquireLock = function(key, pttl) {
   return this.redlock.lock('lock:' + key, pttl || DEFAULT_LOCK_PTTL)
 }
@@ -544,7 +544,7 @@ RedisCache.prototype.getValue = function(key) {
 
           value.headers = JSON.parse(value.headers)
           value.status = parseInt(value.status, 10)
-          value.timestamp = parseFloat(value.timestamp)
+          value.timestamp = parseInt(value.timestamp, 10)
           value['data-extra-pttl'] = parseInt(value['data-extra-pttl'], 10)
         } else value = null
         resolve(value)
