@@ -1,12 +1,31 @@
-var url = require('url')
 var zlib = require('zlib')
 var accepts = require('accepts')
 var stream = require('stream')
+var querystring = require('querystring')
+var jsonSortify = require('json.sortify')
 var generateUuidV4 = require('uuid').v4
 var MemoryCache = require('./memory-cache')
 var RedisCache = require('./redis-cache')
 var Compressor = require('./compressor')
 var pkg = require('../package.json')
+var helpers = require('./helpers')
+var setLongTimeout = helpers.setLongTimeout
+var clearLongTimeout = helpers.clearLongTimeout
+
+var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
+var CACHEABLE_STATUS_CODES = {
+  200: null,
+  201: null,
+  202: null,
+  203: null,
+  204: null,
+  205: null,
+  300: null,
+  301: null,
+  302: null,
+  305: null,
+  307: null,
+}
 
 var t = {
   ms: 1,
@@ -16,6 +35,7 @@ var t = {
   day: 3600000 * 24,
   week: 3600000 * 24 * 7,
   month: 3600000 * 24 * 30,
+  year: 3600000 * 24 * 365,
 }
 
 var instances = []
@@ -50,8 +70,9 @@ function ApiCache() {
     debug: false,
     defaultDuration: 3600000,
     enabled: true,
-    isBypassable: true,
-    appendKey: [],
+    isBypassable: false,
+    append: null,
+    interceptKeyParts: null,
     jsonp: false,
     redisClient: false,
     redisPrefix: '',
@@ -66,6 +87,7 @@ function ApiCache() {
     headers: {
       // 'cache-control':  'no-cache' // example of header overwrite
     },
+    shouldSyncExpiration: false,
     afterHit: null,
     trackPerformance: false,
   }
@@ -97,14 +119,27 @@ function ApiCache() {
     if (!response) return false
     var codes = (options || globalOptions).statusCodes
 
-    if (response.statusCode === 304 || (toggle && !toggle(request, response))) {
+    if (toggle && !toggle(request, response)) {
       return false
     }
 
-    if (codes.exclude && codes.exclude.length && codes.exclude.indexOf(response.statusCode) !== -1)
+    if ((!codes.exclude || !codes.exclude.length) && (!codes.include || !codes.include.length)) {
+      return response.statusCode in CACHEABLE_STATUS_CODES
+    }
+    if (
+      codes.exclude &&
+      codes.exclude.length &&
+      codes.exclude.indexOf(response.statusCode) !== -1
+    ) {
       return false
-    if (codes.include && codes.include.length && codes.include.indexOf(response.statusCode) === -1)
+    }
+    if (
+      codes.include &&
+      codes.include.length &&
+      codes.include.indexOf(response.statusCode) === -1
+    ) {
       return false
+    }
 
     return true
   }
@@ -121,10 +156,10 @@ function ApiCache() {
     index.all.unshift(key)
   }
 
-  function filterBlacklistedHeaders(headers) {
+  function filterBlacklistedHeaders(headers, options) {
     return Object.keys(headers)
       .filter(function(key) {
-        return globalOptions.headerBlacklist.indexOf(key) === -1
+        return (options || globalOptions).headerBlacklist.indexOf(key) === -1
       })
       .reduce(function(acc, header) {
         acc[header] = headers[header]
@@ -132,13 +167,13 @@ function ApiCache() {
       }, {})
   }
 
-  function createCacheObject(status, headers, data, encoding) {
+  function createCacheObject(status, headers, data, encoding, options) {
     return {
       status: status,
-      headers: filterBlacklistedHeaders(headers),
+      headers: filterBlacklistedHeaders(headers, options),
       data: data,
       encoding: encoding,
-      timestamp: new Date().getTime() / 1000, // seconds since epoch.  This is used to properly decrement max-age headers in cached responses.
+      timestamp: Date.now(), // This is used to properly decrement max-age headers in cached responses
     }
   }
 
@@ -146,13 +181,13 @@ function ApiCache() {
     var expireCallback = globalOptions.events.expire
     memCache.add(key, value, duration, expireCallback)
 
-    // add automatic cache clearing from duration, includes max limit on setTimeout
-    timers[key] = setTimeout(function() {
+    // add automatic cache clearing from duration
+    timers[key] = setLongTimeout(function() {
       instance.clear(key, true)
-    }, Math.min(duration, 2147483647))
+    }, duration)
   }
 
-  function debugCacheAddition(cache, key, strDuration, req, res) {
+  function debugCacheAddition(cache, key, strDuration, req, res, options) {
     if (!shouldDebug()) return Promise.resolve()
 
     var elapsed = new Date() - req.apicacheTimer
@@ -165,7 +200,8 @@ function ApiCache() {
             cached.status,
             cached.headers,
             cached.data && cached.data.toString(cached.encoding),
-            cached.encoding
+            cached.encoding,
+            options
           )
           cacheObject.timestamp = cached.timestamp
         } else cacheObject = {}
@@ -186,18 +222,17 @@ function ApiCache() {
     }
   })()
 
-  function getCurrentResponseHeaders(res, statusMsgOrHeaders, maybeHeaders) {
+  function getHeadersFromParams(res, statusMsgOrHeaders, maybeHeaders) {
     if (statusMsgOrHeaders && typeof statusMsgOrHeaders !== 'string') {
       maybeHeaders = statusMsgOrHeaders
     }
     if (!maybeHeaders) maybeHeaders = {}
 
-    var currentResponseHeaders = getSafeHeaders(res)
-    Object.keys(maybeHeaders).forEach(function(name) {
-      currentResponseHeaders[name.toLowerCase()] = maybeHeaders[name]
-    })
-
-    return currentResponseHeaders
+    return Object.keys(maybeHeaders).reduce(function(memo, item) {
+      memo[item.toLowerCase()] = maybeHeaders[item]
+      return memo
+      // some framework writeHead patches remove headers from params, so merge with res.getHeaders()
+    }, getSafeHeaders(res))
   }
 
   function preWriteHead(res, statusCode, statusMsgOrHeaders, maybeHeaders) {
@@ -210,6 +245,24 @@ function ApiCache() {
     Object.keys(maybeHeaders).forEach(function(name) {
       res.setHeader(name, maybeHeaders[name])
     })
+  }
+
+  function fixEncodingHeaders(chunk, headers) {
+    if (!chunk || !headers) return
+    if (Compressor.isReallyCompressed(chunk, headers['content-encoding'])) {
+      delete headers['content-length']
+    } else {
+      delete headers['content-encoding']
+    }
+  }
+
+  function getCacheControlMaxAge(syncedMaxAge, group, shouldSyncExpiration) {
+    var maxAge
+    if (group) maxAge = Math.min(3, syncedMaxAge)
+    else if (!shouldSyncExpiration) maxAge = Math.min(30, syncedMaxAge)
+    else maxAge = syncedMaxAge
+
+    return 'max-age=' + maxAge.toFixed(0) + ', must-revalidate'
   }
 
   function makeResponseCacheable(
@@ -243,38 +296,66 @@ function ApiCache() {
       writeHead: res.writeHead,
       end: res.end,
     }
+    if (!req.apicacheResPatches) {
+      req.apicacheResPatches = apicacheResPatches
+      req.customWriteHeads = []
+      req.runReversedCustomWriteHeadsOnce = (function(isCalled) {
+        return function() {
+          if (isCalled) return
+          isCalled = true
+          var fn
+          while ((fn = req.customWriteHeads.pop())) {
+            fn.apply(null, arguments)
+          }
+        }
+      })()
+    }
 
-    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
-      if (res._shouldCacheResWriteHeadVersionAlreadyRun) {
-        return apicacheResPatches.writeHead.apply(this, arguments)
-      }
-
+    function customWriteHead(statusCode, statusMsgOrHeaders, maybeHeaders) {
+      if (res._shouldCacheResWriteHeadVersionAlreadyRun) return
+      // to use with shouldCacheRes()
       res.statusCode = statusCode
 
+      if (!res._currentResponseHeaders) {
+        // these most likely (if default node writeHead implementation) won't be available at res.getHeaders() yet
+        res._currentResponseHeaders = getHeadersFromParams(res, statusMsgOrHeaders, maybeHeaders)
+      }
+
       // add cache control headers
-      if (!options.headers['cache-control']) {
-        if (shouldCacheRes(req, res, toggle, options)) {
-          res.setHeader(
-            'cache-control',
-            'max-age=' + (duration / 1000).toFixed(0) + ', must-revalidate'
+      if (!options.headers['cache-control'] && !res._currentResponseHeaders['cache-control']) {
+        if (
+          SAFE_HTTP_METHODS.indexOf(req.method) !== -1 &&
+          shouldCacheRes(req, res, toggle, options)
+        ) {
+          var cacheControl
+          var syncedMaxAge = Math.ceil(duration / 1000)
+          cacheControl = getCacheControlMaxAge(
+            syncedMaxAge,
+            req.apicacheGroup,
+            options.shouldSyncExpiration
           )
+          res.setHeader('cache-control', cacheControl)
+          res._currentResponseHeaders['cache-control'] = cacheControl
         } else {
           res.setHeader('cache-control', 'no-store')
         }
       }
 
       if (shouldCacheRes(req, res, toggle, options)) {
+        res._shouldCacheResWriteHeadVersionAlreadyRun = true
+
         // append header overwrites if applicable
         Object.keys(options.headers).forEach(function(name) {
           res.setHeader(name, options.headers[name])
+          res._currentResponseHeaders[name.toLowerCase()] = options.headers[name]
         })
-        res._currentResponseHeaders = getCurrentResponseHeaders(
-          res,
-          statusMsgOrHeaders,
-          maybeHeaders
-        )
-        res._shouldCacheResWriteHeadVersionAlreadyRun = true
       }
+    }
+
+    req.customWriteHeads.unshift(customWriteHead)
+
+    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
+      req.runReversedCustomWriteHeadsOnce(statusCode, statusMsgOrHeaders, maybeHeaders)
 
       return apicacheResPatches.writeHead.apply(this, arguments)
     }
@@ -298,18 +379,20 @@ function ApiCache() {
         res._shouldCacheResWriteOrEndVersionAlreadyRun = true
 
         var getCacheObject = function() {
-          return createCacheObject(res.statusCode, res._currentResponseHeaders || {})
+          return createCacheObject(res.statusCode, res._currentResponseHeaders, null, null, options)
         }
         var getGroup = function() {
           return req.apicacheGroup
         }
         var expireCallback = globalOptions.events.expire
         var cache = redisCache || memCache
-        var chunkSize =
-          // if res.end was called first, it will have only one chunk
+        var chunkSize = Buffer.byteLength(chunk || '', encoding)
+        // if res.end was called first (without calling write), it will have only one chunk
+        // res.socket.writableHighWaterMark is node gte 9
+        var highWaterMark =
           method === 'end'
-            ? Buffer.byteLength(chunk || '', encoding)
-            : res.socket.writableHighWaterMark
+            ? chunkSize
+            : res.socket.writableHighWaterMark || res.socket._writableState.highWaterMark
 
         var cacheWstream = cache
           .createWriteStream(
@@ -318,12 +401,12 @@ function ApiCache() {
             duration,
             expireCallback,
             getGroup,
-            chunkSize,
+            highWaterMark,
             // this is needed while memCache index/groups are still handled externally
             !redisCache &&
               function(statusCode, headers, data, encoding) {
                 addIndexEntries(key, req)
-                var cacheObject = createCacheObject(statusCode, headers, data, encoding)
+                var cacheObject = createCacheObject(statusCode, headers, data, encoding, options)
                 cacheResponse(key, cacheObject, duration)
               }
           )
@@ -334,23 +417,23 @@ function ApiCache() {
               })
               .on('finish', function() {
                 afterTryingToCache()
-                debugCacheAddition(cache, key, strDuration, req, res)
+                debugCacheAddition(cache, key, strDuration, req, res, options)
               })
               .on('unpipe', afterTryingToCache)
           })
 
         return (wstream = cacheWstream.then(function(wstream) {
           if (wstream.isLocked) return wstream
-          var isRestifyGzipMiddlewareAttached = !!res.handledGzip
-          if (isRestifyGzipMiddlewareAttached) {
-            // the middleware will always preset content-encoding to gzip even if
-            // apicache is about to receive raw response stream (middleware attached before apicache)
-            if (Number.isInteger((res._currentResponseHeaders || {})['content-length'])) {
-              delete res._currentResponseHeaders['content-encoding']
-            }
 
-            return wstream
-          }
+          // also indicates it may be already compressed
+          var otherMiddlewareMayWantToChangeCompression =
+            Compressor.getFirstContentEncoding(res._currentResponseHeaders['content-encoding']) !==
+            'identity'
+          // some middlewares will preset content-encoding to e.g. gzip too early
+          // even if apicache is about to receive uncompressed response stream (middleware attached before apicache's one)
+          fixEncodingHeaders(chunk, res._currentResponseHeaders)
+          // don't compress before caching
+          if (otherMiddlewareMayWantToChangeCompression) return wstream
 
           var tstream = Compressor.run(
             {
@@ -374,6 +457,14 @@ function ApiCache() {
     ;['write', 'end'].forEach(function(method) {
       var ret
       res[method] = function(chunk, encoding) {
+        if (!this.headersSent) {
+          req.runReversedCustomWriteHeadsOnce(
+            res.statusCode,
+            res.statusMsgOrHeaders,
+            getSafeHeaders(res)
+          )
+        }
+
         ret = apicacheResPatches[method].apply(this, arguments)
         getWstream(method, chunk, encoding).then(function(wstream) {
           wstream[method](chunk, encoding)
@@ -404,6 +495,14 @@ function ApiCache() {
       return next()
     }
 
+    var isMarkedToCache = !!request.apicacheResPatches
+    if (isMarkedToCache) {
+      // undo patches
+      Object.keys(request.apicacheResPatches).forEach(function(key) {
+        response[key] = request.apicacheResPatches[key]
+      })
+    }
+
     if (options.afterHit) {
       response.on('finish', function() {
         options.afterHit(request, response)
@@ -421,17 +520,30 @@ function ApiCache() {
 
     var headers = getSafeHeaders(response)
     var cacheObjectHeaders = cacheObject.headers || {}
-    var updatedMaxAge = parseInt(
-      duration / 1000 - (new Date().getTime() / 1000 - cacheObject.timestamp),
-      10
-    )
 
-    Object.assign(headers, filterBlacklistedHeaders(cacheObjectHeaders), {
-      // set properly-decremented max-age header.  This ensures that max-age is in sync with the cache expiration.
-      'cache-control': (
-        cacheObjectHeaders['cache-control'] || 'max-age=' + updatedMaxAge + ', must-revalidate'
-      ).replace(/max-age=\s*([+-]?\d+)/, function(_match, cachedMaxAge) {
-        return 'max-age=' + Math.max(0, Math.min(parseInt(cachedMaxAge, 10), updatedMaxAge))
+    var cacheControl
+    // sync max-age with the cache expiration.
+    var elapsedMs = Date.now() - cacheObject.timestamp
+    var updatedMaxAge = Math.ceil((duration - elapsedMs) / 1000)
+    // when caching with options.interceptKeyParts,
+    // same key/cache could be reused for responding
+    // with different middleware options.headers
+    // and to different request methods, so recheck
+    if (options.headers['cache-control']) cacheControl = options.headers['cache-control']
+    else if (SAFE_HTTP_METHODS.indexOf(request.method) !== -1) {
+      if (cacheObjectHeaders['cache-control']) cacheControl = cacheObjectHeaders['cache-control']
+      else {
+        cacheControl = getCacheControlMaxAge(
+          updatedMaxAge,
+          request.apicacheGroup,
+          options.shouldSyncExpiration
+        )
+      }
+    } else cacheControl = 'no-store'
+
+    Object.assign(headers, filterBlacklistedHeaders(cacheObjectHeaders, options), {
+      'cache-control': cacheControl.replace(/max-age=\s*([+-]?\d+)/, function(_match, maxAge) {
+        return 'max-age=' + Math.max(0, Math.min(parseInt(maxAge, 10), updatedMaxAge))
       }),
     })
 
@@ -505,7 +617,8 @@ function ApiCache() {
           cacheObject.key,
           cacheObject['data-token'] || cacheObject.data,
           cacheObject.encoding,
-          response.socket.writableHighWaterMark
+          // res.socket.writableHighWaterMark is node gte 9
+          response.socket.writableHighWaterMark || response.socket._writableState.highWaterMark
         )
         .on('error', function() {
           debug('error in sendCachedResponse function')
@@ -513,22 +626,21 @@ function ApiCache() {
         })
     }
 
-    // restify middleware will always gzip when attached before apicache,
-    // even if we change accept-encoding or content-encoding when sending cached version
-    var isntRestifyGzipMiddlewareAttached = !response.handledGzip
-    // dont use headers['content-encoding'] as it may be already changed to gzip by restify middleware
+    // dont use headers['content-encoding'] as it may be already changed to e.g. gzip by some middleware
     var cachedEncoding = (cacheObjectHeaders['content-encoding'] || 'identity').split(',')[0]
+    var currentResCacheEncoding = (headers['content-encoding'] || 'identity').split(',')[0]
+    var noOtherMiddlewareMayWantToChangeCompression = cachedEncoding === currentResCacheEncoding
     var requestAccepts = accepts(request)
     if (
       (cachedEncoding === 'identity' ||
-        (isntRestifyGzipMiddlewareAttached &&
+        (noOtherMiddlewareMayWantToChangeCompression &&
           !CACHE_CONTROL_NO_TRANSFORM_REGEX.test(headers['cache-control'] || ''))) &&
       requestAccepts.encodings(cachedEncoding)
     ) {
       // Doing response.writeHead(cacheObject.status || 200, headers)
-      // can make writeHead patch from some compression middlewares (e.g. restify's gzip one) fail
-      // Using res.writeHead with headers that don't mess with content-length / content-encoding
-      // is mostly ok
+      // can make writeHead patch from some compression middlewares fail
+      // (although using res.writeHead with headers that don't mess with content-length / content-encoding
+      // would mostly be ok)
       preWriteHead(response, cacheObject.status || 200, headers)
       return getRstream().pipe(response)
       // try to decompress
@@ -548,8 +660,8 @@ function ApiCache() {
       tstream.on('error', function() {
         debug('error in decompression stream')
         this.unpipe()
-        // erroed cause didn't need to decompress
-        // probably due to restify gzip middleware setting content-encoding to gzip too early
+        // if erroed cause didn't need to decompress
+        // try sending it without transforming
         getRstream()
           .on('error', function() {
             debug('error in decompression stream')
@@ -579,10 +691,184 @@ function ApiCache() {
     }
   }
 
-  function syncOptions() {
-    for (var i in middlewareOptions) {
+  var syncOptions = (function() {
+    function syncOptionsByIndex(i) {
       Object.assign(middlewareOptions[i].options, globalOptions, middlewareOptions[i].localOptions)
     }
+
+    return function(i) {
+      if (i) return syncOptionsByIndex(i)
+      else {
+        for (i in middlewareOptions) {
+          syncOptionsByIndex(i)
+        }
+      }
+    }
+  })()
+
+  function getAppendice(append, req, res) {
+    if (!append) return ''
+
+    var appendice
+    if (typeof append === 'function') {
+      appendice = append(req, res)
+      // ['x', 'y'] => req?.x?.y
+    } else if (append.length > 0) {
+      appendice = req
+      for (var i = 0; i < append.length; i++) {
+        if (!appendice) break
+        appendice = appendice[append[i]]
+      }
+    }
+
+    return appendice || ''
+  }
+
+  function getKeyParts(req, res, options) {
+    var query
+    if (req.query !== null && typeof req.query === 'object') query = Object.assign({}, req.query)
+    // In Express,the url is ambiguous based on where a router is mounted.  originalUrl will give the full Url
+    var url = (req.originalUrl || req.url).replace(/\/?(?:\?([^#]*)(?:#.*)?)?$/, function(
+      _match,
+      qs
+    ) {
+      if (!query) {
+        query = querystring.parse(qs)
+        delete query['']
+      }
+      return ''
+    })
+    // couldn't use (?:(?<!^)\/)? negative look-behind instead of \/? at regexp above to keep / if at beginning (node gte 9)
+    // also, it will consider a maybe possible req.originalUrl || req.url '' as '/'
+    if (url === '') url = '/'
+    if (options.jsonp) {
+      if ([true, false].indexOf(options.jsonp) === -1) {
+        delete query.jsonp
+        delete query.callback
+      } else delete query[options.jsonp]
+    }
+
+    var parts = {
+      method: req.method,
+      url: url,
+      params: Object.assign(query, typeof req.body === 'object' ? Object.assign({}, req.body) : {}),
+      appendice: getAppendice(options.append || options.appendKey, req, res),
+    }
+
+    if (options.interceptKeyParts) {
+      parts = options.interceptKeyParts(req, res, parts) || parts
+    }
+    return parts
+  }
+
+  function getSimilarKeyFromOtherMethod(key, method, otherMethod) {
+    return key.replace(method.toLowerCase(), otherMethod.toLowerCase())
+  }
+
+  this.getKey = function(keyParts) {
+    if (!keyParts || typeof keyParts !== 'object') return '{}'
+
+    var url
+    if (typeof keyParts.url === 'string') {
+      url = keyParts.url.trim()
+      if (url[0] !== '/') url = '/' + url
+      if (url.length > 1) url = url.replace(/\/$/, '')
+    } else url = ''
+
+    var appendice
+    if (typeof keyParts.appendice === 'string') appendice = keyParts.appendice
+    else if (Number.isNaN(keyParts.appendice)) appendice = 'NaN'
+    else if ([null, undefined].indexOf(keyParts.appendice) === -1) {
+      try {
+        appendice = jsonSortify(keyParts.appendice)
+      } catch (err) {
+        appendice = ''
+      }
+    } else appendice = ''
+
+    return (
+      (typeof keyParts.method === 'string' ? keyParts.method.toLowerCase() : '') +
+      url +
+      (keyParts.params !== null && typeof keyParts.params === 'object'
+        ? jsonSortify(keyParts.params)
+        : '{}') +
+      appendice
+    )
+  }
+
+  this.has = function(key) {
+    if ([null, undefined].indexOf(key) !== -1) return Promise.resolve(false)
+
+    return (redisCache || memCache).has(key)
+  }
+
+  this.get = function(key) {
+    if ([null, undefined].indexOf(key) !== -1) return Promise.resolve(false)
+
+    return Promise.resolve((redisCache || memCache).get(key)).then(function(cached) {
+      if (!cached) return null
+
+      cached = cached.value
+      // this.set can store any value, so return raw cached if not what apicache regularly stores
+      if (
+        cached === null ||
+        typeof cached !== 'object' ||
+        !['status', 'headers', 'data', 'encoding', 'timestamp'].every(function(k) {
+          return k in cached
+        })
+      ) {
+        return cached
+      }
+
+      // try formatting
+      try {
+        var data = cached.data
+        if ([null, undefined].indexOf(data) === -1) {
+          data = data.toString(cached.encoding)
+          try {
+            data = JSON.parse(data)
+          } catch (err) {}
+        }
+
+        // don't send with all properties
+        // (e.g. encoding as it was already used above for parsing and redis data-extra-pttl prop)
+        // if it's really what apicache regularly stores
+        return {
+          status: cached.status,
+          headers: cached.headers,
+          data: data,
+          timestamp: cached.timestamp,
+        }
+      } catch (err) {
+        return cached
+      }
+    })
+  }
+
+  this.set = function(key, value, duration, group, expirationCallback) {
+    if ([null, undefined].indexOf(key) !== -1) return Promise.resolve(false)
+
+    duration = this.getDuration(duration)
+    return (
+      // for now, this is the way we make sure .set can safely modify an already existing item
+      // e.g. it will remove from old group
+      Promise.resolve(this.clear(key))
+        .then(function() {
+          return Promise.resolve(
+            (redisCache || memCache).add(key, value, duration, expirationCallback, group)
+          )
+        })
+        // this is needed while memCache index/groups are still handled externally
+        .then(function() {
+          if (!redisCache) {
+            addIndexEntries(key, { apicacheGroup: group })
+          }
+          return value
+        })
+        .catch(function() {
+          return false
+        })
+    )
   }
 
   this.clear = function(target, isAutomatic) {
@@ -604,7 +890,7 @@ function ApiCache() {
 
       group.forEach(function(key) {
         debug('clearing cached entry for "' + key + '"')
-        clearTimeout(timers[key])
+        clearLongTimeout(timers[key])
         delete timers[key]
         memCache.delete(key)
 
@@ -612,9 +898,9 @@ function ApiCache() {
       })
 
       delete index.groups[target]
-    } else if (target) {
+    } else if (target || target === '') {
       debug('clearing ' + (isAutomatic ? 'expired' : 'cached') + ' entry for "' + target + '"')
-      clearTimeout(timers[target])
+      clearLongTimeout(timers[target])
       delete timers[target]
       // clear actual cached entry
       memCache.delete(target)
@@ -691,22 +977,24 @@ function ApiCache() {
   }
 
   this.middleware = function cache(strDuration, middlewareToggle, localOptions) {
-    var duration = instance.getDuration(strDuration)
+    if (!localOptions) localOptions = {}
+    var duration = parseDuration(strDuration)
     var opt = {}
 
+    var middlewareOptionsIndex = middlewareOptions.length
     middlewareOptions.push({
       options: opt,
     })
 
     var options = function(localOptions) {
       if (localOptions) {
-        middlewareOptions.find(function(middleware) {
-          return middleware.options === opt
-        }).localOptions = localOptions
+        if (localOptions.defaultDuration) {
+          localOptions.defaultDuration = parseDuration(localOptions.defaultDuration)
+          duration = localOptions.defaultDuration
+        }
+        middlewareOptions[middlewareOptionsIndex].localOptions = localOptions
+        syncOptions(middlewareOptionsIndex)
       }
-
-      syncOptions()
-
       return opt
     }
 
@@ -891,35 +1179,22 @@ function ApiCache() {
       //   return bypass()
       // }
 
+      // this can change at runtime
+      duration = instance.getDuration(duration)
+
       // embed timer
       req.apicacheTimer = new Date()
 
-      // In Express 4.x the url is ambigious based on where a router is mounted.  originalUrl will give the full Url
-      var key = req.originalUrl || req.url
-
-      // Remove querystring from key if jsonp option is enabled
-      if (opt.jsonp) {
-        // eslint-disable-next-line node/no-deprecated-api
-        key = url.URL ? new url.URL(key).pathname : url.parse(key).pathname
-      }
-
-      // add appendKey (either custom function or response path)
-      if (typeof opt.appendKey === 'function') {
-        key += '$$appendKey=' + opt.appendKey(req, res)
-      } else if (opt.appendKey.length > 0) {
-        var appendKey = req
-
-        for (var i = 0; i < opt.appendKey.length; i++) {
-          appendKey = appendKey[opt.appendKey[i]]
-        }
-        key += '$$appendKey=' + appendKey
-      }
-
+      var keyParts = getKeyParts(req, res, opt)
+      var key = instance.getKey(keyParts)
       var cache = redisCache || memCache
-      var _makeResponseCacheable = function() {
+
+      // can have different keys e.g. one middleware has appendice while the other one doesn't
+      var makeResponseCacheableCount = `makeResponseCacheableCount${key}`
+      function _makeResponseCacheable() {
         try {
           perf.miss(key)
-          req.makeResponseCacheableCount = (req.makeResponseCacheableCount || 0) + 1
+          req[makeResponseCacheableCount] = (req[makeResponseCacheableCount] || 0) + 1
           return makeResponseCacheable(
             req,
             res,
@@ -930,7 +1205,7 @@ function ApiCache() {
             middlewareToggle,
             opt,
             function() {
-              if (--req.makeResponseCacheableCount > 0) return Promise.resolve()
+              if (--req[makeResponseCacheableCount] > 0) return Promise.resolve()
               return cache.releaseLockWithId(
                 'make-cacheable:' + key,
                 typeof req.id === 'function' ? req.id() : req.id
@@ -943,13 +1218,14 @@ function ApiCache() {
         }
       }
 
-      var isSameRequestStackAllowedToMakeResponseCacheable = function() {
+      function isSameRequestStackAllowedToMakeResponseCacheable() {
         return cache.acquireLockWithId(
           'make-cacheable:' + key,
           typeof req.id === 'function' ? req.id() : req.id
         )
       }
-      var maybeMakeResponseCacheable = function() {
+
+      function maybeMakeResponseCacheable() {
         if (!req.id) req.id = generateUuidV4()
 
         return isSameRequestStackAllowedToMakeResponseCacheable().then(function(isAllowed) {
@@ -957,7 +1233,7 @@ function ApiCache() {
           else {
             // give time to prior request finish caching
             return new Promise(function(resolve) {
-              setTimeout(function() {
+              setLongTimeout(function() {
                 resolve(attemptCacheHit())
               }, 10)
             })
@@ -965,10 +1241,21 @@ function ApiCache() {
         })
       }
 
-      function attemptCacheHit() {
-        var cachedPromise = Promise.resolve(cache.getValue(key))
+      function getCached(key) {
+        return Promise.resolve(cache.getValue(key)).then(function(cached) {
+          if (cached) {
+            cached.key = key
+          } else if (req.method === 'HEAD') {
+            var getMethodKey = getSimilarKeyFromOtherMethod(key, 'head', 'get')
+            return getCached(getMethodKey)
+          }
 
-        return cachedPromise
+          return cached
+        })
+      }
+
+      function attemptCacheHit() {
+        return getCached(key)
           .then(function(cached) {
             if (cached) {
               perf.hit(key)
@@ -1009,12 +1296,11 @@ function ApiCache() {
         (options.redisClient !== undefined && globalOptions.redisClient !== options.redisClient) ||
         (options.redisPrefix !== undefined && globalOptions.redisPrefix !== options.redisPrefix)
       Object.assign(globalOptions, options)
-      syncOptions()
-
       if ('defaultDuration' in options) {
         // Convert the default duration to a number in milliseconds (if needed)
         globalOptions.defaultDuration = parseDuration(globalOptions.defaultDuration, 3600000)
       }
+      syncOptions()
 
       if (globalOptions.trackPerformance) {
         debug('WARNING: using trackPerformance flag can cause high memory usage!')
@@ -1056,6 +1342,11 @@ function ApiCache() {
   // initialize index
   this.resetIndex()
   this.initRedis()
+
+  function _this() {
+    return this.middleware.apply(this, arguments)
+  }
+  return Object.assign(_this.bind(this), this)
 }
 
 module.exports = new ApiCache()

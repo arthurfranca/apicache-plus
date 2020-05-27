@@ -77,7 +77,7 @@ module.exports = function(app) {
   app.get('/api/missing', function(req, res) {
     app.requestsProcessed++
 
-    res.status(404)
+    res.status(Number(req.headers['status-code']) || 404)
     res.json({ success: false, message: 'Resource not found' })
   })
 

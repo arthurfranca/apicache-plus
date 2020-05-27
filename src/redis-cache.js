@@ -1,6 +1,9 @@
 var stream = require('stream')
 var Redlock = require('redlock')
 var generateUuidV4 = require('uuid').v4
+var helpers = require('./helpers')
+var setLongTimeout = helpers.setLongTimeout
+var clearLongTimeout = helpers.clearLongTimeout
 
 function RedisCache(options, debug) {
   this.redis = options.redisClient
@@ -32,7 +35,7 @@ function RedisCache(options, debug) {
   }
 }
 
-var DEFAULT_LOCK_PTTL = 30 * 1000 // 30s will be the response init limit
+var DEFAULT_LOCK_PTTL = 60 * 1000 // 60s will be the response init limit
 RedisCache.prototype._acquireLock = function(key, pttl) {
   return this.redlock.lock('lock:' + key, pttl || DEFAULT_LOCK_PTTL)
 }
@@ -194,7 +197,7 @@ RedisCache.prototype.createWriteStream = (function() {
               if (err || res === null) cb(err)
 
               if (timeoutCallback && typeof timeoutCallback === 'function') {
-                that.timers[key] = setTimeout(function() {
+                that.timers[key] = setLongTimeout(function() {
                   that.debug('clearing expired entry for "' + key + '"')
                   timeoutCallback(value, key)
                 }, time)
@@ -326,7 +329,7 @@ RedisCache.prototype.createReadStream = function(key, dataToken, encoding, highW
         if (retry-- === 0) throw err
 
         return new Promise(function(resolve) {
-          setTimeout(function() {
+          setLongTimeout(function() {
             resolve(pushChunk(push, retry))
           }, 20)
         })
@@ -399,7 +402,7 @@ RedisCache.prototype.clear = function(target) {
                 multi.del(keys)
                 keys.forEach(function(key) {
                   that.debug('clearing cached entry for "' + key + '"')
-                  clearTimeout(that.timers[key])
+                  clearLongTimeout(that.timers[key])
                 })
                 if (cursor === '0') {
                   multi.del(group)
@@ -426,7 +429,7 @@ RedisCache.prototype.clear = function(target) {
             that.redis.del(target, function(err, deleteCount) {
               if (err) reject(err)
               else {
-                clearTimeout(that.timers[target])
+                clearLongTimeout(that.timers[target])
                 resolve(parseInt(deleteCount, 10))
               }
             })
@@ -441,7 +444,7 @@ RedisCache.prototype.clear = function(target) {
                 .exec(function(err, res) {
                   if (err || res === null) return reject(err)
 
-                  clearTimeout(that.timers[target])
+                  clearLongTimeout(that.timers[target])
                   var deleteCount = parseInt((res[2] || [null, 0])[1], 10)
                   var wasGroupDeleted = parseInt((res[3] || [null, 1])[1], 10) === 0
                   if (wasGroupDeleted) deleteCount++
@@ -455,15 +458,63 @@ RedisCache.prototype.clear = function(target) {
   })
 }
 
+RedisCache.prototype.add = function(key, value, time, timeoutCallback, group) {
+  var that = this
+  return new Promise(function(resolve, reject) {
+    if (typeof value !== 'string' && !Buffer.isBuffer(value)) {
+      try {
+        if (value === undefined) value = Buffer.alloc(0)
+        else value = JSON.stringify(value)
+      } catch (err) {
+        value = String(value)
+      }
+    }
+    var expire = time + Date.now()
+    var multi = that.redis
+      .multi()
+      .hset(key, 'value', value)
+      .expireat(expire)
+    if (group) {
+      multi.hset(key, 'group', group).sadd('group:' + group, key)
+    }
+
+    multi.exec(function(err, res) {
+      if (err || res === null) return reject(err)
+
+      if (timeoutCallback && typeof timeoutCallback === 'function') {
+        that.timers[key] = setTimeout(function() {
+          that.debug('clearing expired entry for "' + key + '"')
+          timeoutCallback(value, key)
+        }, time)
+      }
+      resolve({
+        value: value,
+        expire: expire,
+        timeout: that.timers[key],
+      })
+    })
+  })
+}
+
+RedisCache.prototype.has = function(key) {
+  var that = this
+  return new Promise(function(resolve) {
+    that.redis.exists(key, function(err, res) {
+      resolve(!err && res === 1)
+    })
+  })
+}
+
 RedisCache.prototype.get = function(key) {
   var that = this
   return this.getValue(key).then(function(value) {
-    if (value === null) return { value: value }
+    var wasManuallyStoredByUserCallingSetMethod = typeof value !== 'object' || !value['data-token']
+    if (value === null || wasManuallyStoredByUserCallingSetMethod) return { value: value }
 
     return new Promise(function(resolve, reject) {
       that.redis.getBuffer('data:' + value['data-token'] + ':' + key, function(err, data) {
         if (err) return reject(err)
-        if (data !== null) value.data = data
+        value.data = data // Can be null; yet, 'data' property must be present
 
         that.redis.pttl(key, function(err, time) {
           if (err) return reject(err)
@@ -488,10 +539,12 @@ RedisCache.prototype.getValue = function(key) {
       else {
         // ioredis hgetall empty value is {}, while node-redis is null
         if (value && Object.keys(value).length > 0) {
-          value.key = key
+          var wasManuallyStoredByUserCallingSetMethod = 'value' in value
+          if (wasManuallyStoredByUserCallingSetMethod) return value.value
+
           value.headers = JSON.parse(value.headers)
           value.status = parseInt(value.status, 10)
-          value.timestamp = parseFloat(value.timestamp)
+          value.timestamp = parseInt(value.timestamp, 10)
           value['data-extra-pttl'] = parseInt(value['data-extra-pttl'], 10)
         } else value = null
         resolve(value)
@@ -630,7 +683,7 @@ RedisCache.prototype._clearAll = function() {
 
         that.redis.flushdb(function() {
           Object.keys(that.timers).forEach(function(key) {
-            clearTimeout(that.timers[key])
+            clearLongTimeout(that.timers[key])
           })
           resolve(parseInt(count, 10))
         })
@@ -658,7 +711,7 @@ RedisCache.prototype._clearAll = function() {
             deleteCount += parseInt(removedCount, 10)
 
             keys.forEach(function(key) {
-              clearTimeout(that.timers[key])
+              clearLongTimeout(that.timers[key])
             })
             if (cursor === '0') resolve(deleteCount)
             else resolve(deleteAll(cursor, match))

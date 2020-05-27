@@ -4,12 +4,13 @@ var compressible = require('compressible')
 var zlib = require('zlib')
 var stream = require('stream')
 var THRESHOLD = 1024
-var NO_CONTENT_AND_NOT_MODIFIED_STATUS_CODES = [204, 304]
+var NO_MESSAGE_BODY_STATUS_CODES = [204, 205, 304]
 var CACHE_CONTROL_NO_TRANSFORM_REGEX = /(?:^|,)\s*?no-transform\s*?(?:,|$)/
 var MIN_CHUNK_SIZE = 64
-var DEFAULT_HIGH_WATER_MARK = 16384
 
 function Compressor(options, debug) {
+  if (!options) options = {}
+  if ([null, undefined].indexOf(options.chunkSize) !== -1) options.chunkSize = 0
   Object.assign(this, options)
   this.debug = debug || function() {}
 }
@@ -19,26 +20,68 @@ Compressor.run = function(options, debug) {
   return new Compressor(options, debug).run()
 }
 
+Compressor.isReallyCompressed = function(chunk, contentEncoding) {
+  if (!chunk) return false
+  contentEncoding = this.getFirstContentEncoding(contentEncoding)
+  if (!this.isCompressed(contentEncoding)) return false
+
+  var decoder
+  var options
+  switch (contentEncoding) {
+    case 'br': {
+      if (!zlib.brotliDecompressSync) return true
+      decoder = zlib.brotliDecompressSync
+      options = { finishFlush: zlib.constants.BROTLI_OPERATION_FLUSH }
+      break
+    }
+    case 'gzip':
+    case 'deflate': {
+      decoder = zlib.unzipSync
+      options = { finishFlush: (zlib.constants && zlib.constants.Z_SYNC_FLUSH) || 2 }
+      break
+    }
+    default:
+      return true
+  }
+
+  try {
+    var slice = chunk.slice(0, MIN_CHUNK_SIZE)
+    decoder(slice, options)
+    return true
+  } catch (err) {
+    return false
+  }
+}
+
+Compressor.isCompressed = function(contentEncoding) {
+  return (contentEncoding || 'identity') !== 'identity'
+}
+
+Compressor.getFirstContentEncoding = function(contentEncoding) {
+  return (contentEncoding || 'identity').split(',')[0].trim()
+}
+
 Compressor.prototype.clientDoesntWantContent = function() {
   return (
     this.requestMehod === 'HEAD' ||
-    NO_CONTENT_AND_NOT_MODIFIED_STATUS_CODES.indexOf(this.responseStatusCode) !== -1
+    NO_MESSAGE_BODY_STATUS_CODES.indexOf(this.responseStatusCode) !== -1
   )
 }
 
 Compressor.prototype.isAlreadyCompressed = function() {
-  return (this.responseHeaders['content-encoding'] || 'identity') !== 'identity'
+  return Compressor.isCompressed(
+    Compressor.getFirstContentEncoding(this.responseHeaders['content-encoding'])
+  )
 }
 
 Compressor.prototype.isContentLengthBellowThreshold = function() {
   if (
     [null, undefined, ''].indexOf(this.responseHeaders['content-length']) !== -1 &&
-    // if res.end wasnt called first, content length can't be inferred from chunk size
+    // if res.end wasnt called first (without calling write), content length can't be inferred from chunk size
     this.responseMethod !== 'end'
   ) {
-    return false
+    return this.chunkSize === 0
   }
-
   var contentLength = Number(this.responseHeaders['content-length']) || this.chunkSize
   return contentLength < THRESHOLD
 }
@@ -87,7 +130,7 @@ Compressor.prototype.run = function() {
 
     var encoding
     var tstream
-    var chunkSize = Math.max(MIN_CHUNK_SIZE, this.chunkSize || DEFAULT_HIGH_WATER_MARK)
+    var chunkSize = Math.max(MIN_CHUNK_SIZE, this.chunkSize)
 
     // choose best compression method available
     // (don't care about what request accepts, as cache will be reused by many different clients)
