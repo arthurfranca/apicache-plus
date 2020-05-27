@@ -222,18 +222,17 @@ function ApiCache() {
     }
   })()
 
-  function getCurrentResponseHeaders(res, statusMsgOrHeaders, maybeHeaders) {
+  function getHeadersFromParams(res, statusMsgOrHeaders, maybeHeaders) {
     if (statusMsgOrHeaders && typeof statusMsgOrHeaders !== 'string') {
       maybeHeaders = statusMsgOrHeaders
     }
     if (!maybeHeaders) maybeHeaders = {}
 
-    var currentResponseHeaders = getSafeHeaders(res)
-    Object.keys(maybeHeaders).forEach(function(name) {
-      currentResponseHeaders[name.toLowerCase()] = maybeHeaders[name]
-    })
-
-    return currentResponseHeaders
+    return Object.keys(maybeHeaders).reduce(function(memo, item) {
+      memo[item.toLowerCase()] = maybeHeaders[item]
+      return memo
+      // some framework writeHead patches remove headers from params, so merge with res.getHeaders()
+    }, getSafeHeaders(res))
   }
 
   function preWriteHead(res, statusCode, statusMsgOrHeaders, maybeHeaders) {
@@ -297,20 +296,33 @@ function ApiCache() {
       writeHead: res.writeHead,
       end: res.end,
     }
-    if (!req.apicacheResPatches) req.apicacheResPatches = apicacheResPatches
+    if (!req.apicacheResPatches) {
+      req.apicacheResPatches = apicacheResPatches
+      req.customWriteHeads = []
+      req.runReversedCustomWriteHeadsOnce = (function(isCalled) {
+        return function() {
+          if (isCalled) return
+          isCalled = true
+          var fn
+          while ((fn = req.customWriteHeads.pop())) {
+            fn.apply(null, arguments)
+          }
+        }
+      })()
+    }
 
     function customWriteHead(statusCode, statusMsgOrHeaders, maybeHeaders) {
-      if (
-        res._shouldCacheResWriteHeadVersionAlreadyRun &&
-        !shouldCacheRes(req, res, toggle, options)
-      ) {
-        return
-      }
-
+      if (res._shouldCacheResWriteHeadVersionAlreadyRun) return
+      // to use with shouldCacheRes()
       res.statusCode = statusCode
 
+      if (!res._currentResponseHeaders) {
+        // these most likely (if default node writeHead implementation) won't be available at res.getHeaders() yet
+        res._currentResponseHeaders = getHeadersFromParams(res, statusMsgOrHeaders, maybeHeaders)
+      }
+
       // add cache control headers
-      if (!options.headers['cache-control']) {
+      if (!options.headers['cache-control'] && !res._currentResponseHeaders['cache-control']) {
         if (
           SAFE_HTTP_METHODS.indexOf(req.method) !== -1 &&
           shouldCacheRes(req, res, toggle, options)
@@ -323,31 +335,27 @@ function ApiCache() {
             options.shouldSyncExpiration
           )
           res.setHeader('cache-control', cacheControl)
+          res._currentResponseHeaders['cache-control'] = cacheControl
         } else {
           res.setHeader('cache-control', 'no-store')
         }
       }
 
       if (shouldCacheRes(req, res, toggle, options)) {
+        res._shouldCacheResWriteHeadVersionAlreadyRun = true
+
         // append header overwrites if applicable
         Object.keys(options.headers).forEach(function(name) {
           res.setHeader(name, options.headers[name])
+          res._currentResponseHeaders[name.toLowerCase()] = options.headers[name]
         })
-        res._currentResponseHeaders = getCurrentResponseHeaders(
-          res,
-          statusMsgOrHeaders,
-          maybeHeaders
-        )
-        res._shouldCacheResWriteHeadVersionAlreadyRun = true
       }
     }
 
-    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
-      if (this.wasCustomWriteHeadCalledByWriteOrEnd) {
-        return apicacheResPatches.writeHead.apply(this, arguments)
-      } else this.wasCustomWriteHeadCalledByHead = true
+    req.customWriteHeads.unshift(customWriteHead)
 
-      customWriteHead(statusCode, statusMsgOrHeaders, maybeHeaders)
+    res.writeHead = function(statusCode, statusMsgOrHeaders, maybeHeaders) {
+      req.runReversedCustomWriteHeadsOnce(statusCode, statusMsgOrHeaders, maybeHeaders)
 
       return apicacheResPatches.writeHead.apply(this, arguments)
     }
@@ -449,9 +457,12 @@ function ApiCache() {
     ;['write', 'end'].forEach(function(method) {
       var ret
       res[method] = function(chunk, encoding) {
-        if (!this.headersSent && !this.wasCustomWriteHeadCalledByHead) {
-          this.wasCustomWriteHeadCalledByWriteOrEnd = true
-          customWriteHead(res.statusCode, res.statusMsgOrHeaders, getSafeHeaders(res))
+        if (!this.headersSent) {
+          req.runReversedCustomWriteHeadsOnce(
+            res.statusCode,
+            res.statusMsgOrHeaders,
+            getSafeHeaders(res)
+          )
         }
 
         ret = apicacheResPatches[method].apply(this, arguments)

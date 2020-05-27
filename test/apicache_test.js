@@ -895,21 +895,17 @@ describe('.middleware {MIDDLEWARE}', function() {
           var _write = res.write
           res.write = function() {
             var args = arguments
-            setImmediate(
-              function() {
-                _write.apply(this, args)
-              }.bind(this)
-            )
+            setImmediate(function() {
+              _write.apply(res, args)
+            })
             return res
           }
           var _end = res.end
           res.end = function() {
             var args = arguments
-            setImmediate(
-              function() {
-                _end.apply(this, args)
-              }.bind(this)
-            )
+            setImmediate(function() {
+              _end.apply(res, args)
+            })
             return res
           }
 
@@ -2005,7 +2001,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         ;[
           { body: responseBody, fn: respondWithWriteHeadFirst, desc: 'calling writeHead first' },
           { body: otherResponseBody, fn: respondWithWriteFirst, desc: 'calling write first' },
-          { body: anotherResponseBody, fn: respondWithEndFirst, desc: 'calling write end' },
+          { body: anotherResponseBody, fn: respondWithEndFirst, desc: 'calling end first' },
         ].forEach(function(testConfig) {
           describe(testConfig.desc, function() {
             beforeEach(function() {
@@ -2028,6 +2024,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                     return req.url[req.url.length - 1].toUpperCase()
                   },
                   headerBlacklist: [this.serverHeader],
+                  headers: { 'X-Custom': 'plus' },
                 }
               )
               this.otherRegularMiddleware = cache('2 seconds', null)
@@ -2040,8 +2037,8 @@ describe('.middleware {MIDDLEWARE}', function() {
               this.app.get(
                 '/sameroute',
                 this.otherRegularMiddleware,
-                this.regularMiddleware,
                 // this is starting one cause patched res functions gets called at reverse order
+                this.regularMiddleware,
                 this.skippingMiddleware,
                 this.respond
               )
@@ -2052,6 +2049,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2068,6 +2066,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
@@ -2075,6 +2074,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(value.headers['x-custom']).to.be.undefined
                 })
             })
 
@@ -2094,6 +2094,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2110,6 +2111,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
@@ -2117,6 +2119,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.be.undefined
+                  expect(value.headers['x-custom']).to.equal('plus')
                 })
             })
 
@@ -2136,6 +2139,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2152,6 +2156,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
@@ -2159,6 +2164,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.be.undefined
+                  expect(value.headers['x-custom']).to.equal('plus')
                 })
             })
 
@@ -2178,6 +2184,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2194,6 +2201,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
@@ -2201,6 +2209,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(value.headers['x-custom']).to.be.undefined
                 })
             })
 
@@ -2220,6 +2229,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2236,6 +2246,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
@@ -2243,6 +2254,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.be.undefined
+                  expect(value.headers['x-custom']).to.equal('plus')
                 })
             })
 
@@ -2262,6 +2274,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2278,6 +2291,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
@@ -2285,6 +2299,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(value.headers['x-custom']).to.be.undefined
                 })
             })
 
@@ -2305,6 +2320,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2321,6 +2337,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.be.undefined
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}')
@@ -2328,10 +2345,11 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(value.headers['x-custom']).to.be.undefined
                 })
             })
 
-            it('starting with a bypass toggle v2', function() {
+            it('starting and ending with a bypass toggle v2', function() {
               var that = this
               this.app.get(
                 '/sameroute',
@@ -2348,6 +2366,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 .expect('Cache-Control', /max-age/)
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   return new Promise(function(resolve) {
                     setTimeout(function() {
@@ -2364,6 +2383,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(res) {
                   expect(res.headers[that.serverHeader]).to.equal(that.serverHeaderValue)
+                  expect(res.headers['x-custom']).to.equal('plus')
                   expect(that.app.requestsProcessed).to.equal(1)
                   expect(apicache.getIndex().all.length).to.equal(1)
                   expect(apicache.getIndex().all[0]).to.equal('get/sameroute{}E')
@@ -2371,6 +2391,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
                 .then(function(value) {
                   expect(value.headers[that.serverHeader]).to.be.undefined
+                  expect(value.headers['x-custom']).to.equal('plus')
                 })
             })
           })
