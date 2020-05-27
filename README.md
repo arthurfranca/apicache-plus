@@ -1,4 +1,4 @@
-# Effortless api request caching for Express/Node using plain-english durations.
+# Effortless api response caching for Express/Node using plain-english durations.
 
 #### Supports Redis or built-in memory engine with auto-clearing.
 
@@ -72,7 +72,7 @@ import apicache from 'apicache-plus'
 
 const app = express()
 
-app.use(compression()).use(apicache)
+app.use(compression()).use(apicache('5 minutes'))
 ```
 
 #### Cache grouping and manual controls
@@ -155,10 +155,10 @@ app.get('/api/found', cacheSuccesses, (req, res) => {
   enabled:              true|false,         // if false, turns off caching globally (useful on dev)
   isBypassable:         false|true,         // if true, bypasses cache by requesting with Cache-Control: no-store header
   redisClient:          client,             // if provided, uses the [node-redis](https://github.com/NodeRedis/node_redis) client instead of [memory-cache](https://github.com/ptarjan/node-cache)
-  appendKey:           fn(req, res),       // appendKey takes the req/res objects and returns a custom value to extend the cache key
+  appendKey:            fn(req, res),       // appendKey takes the req/res objects and returns a custom value to extend the cache key
   interceptKeyParts:    fn(req, res, parts) // change url key name. For instance, if you want to cache with same key all requests to an url with any method (GET, POST etc), function(req, res, parts) { parts.method = ''; return parts }
   headerBlacklist:      [],                 // list of headers that should never be cached
-  statusCodes: {                         // in most cases there is no need to set it as the default config will be enough
+  statusCodes: {                            // in most cases there is no need to set it as the default config will be enough
     exclude:            [],                 // list status codes to specifically exclude (e.g. [404, 403] cache all responses unless they had a 404 or 403 status)
     include:            [],                 // list status codes to require (e.g. [200] caches ONLY responses with a success/200 code)
   },
@@ -224,9 +224,9 @@ app.get('/api/cache/index', function(req, res, next) {
   res.send(apicache.getIndex())
 })
 
-// GET apicache index (for the curious)
-app.get('/api/cache/clear/:key?', function(req, res, next) {
-  res.send(200, apicache.clear(req.params.key || req.query.key))
+// DELETE apicache group
+app.delete('/api/cache/clear/:group?', function(req, res, next) {
+  res.send(200, apicache.clear(req.params.group || req.query.group))
 })
 ```
 
