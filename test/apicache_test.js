@@ -3492,7 +3492,7 @@ describe('.has(key)', function() {
   })
 })
 
-describe('.get(keyParts)', function() {
+describe('.get(key)', function() {
   var db = redis.createClient({ prefix: 'a-prefix:' })
   var configs = [
     {
@@ -3541,41 +3541,99 @@ describe('.get(keyParts)', function() {
         describe('when key is auto set by apicache middleware', function() {
           apis.forEach(function(api) {
             describe(api.name + ' tests', function() {
-              beforeEach(function() {
-                var mockAPI = api.server
-                var app = mockAPI.create('10 seconds')
-                this.cache = app.apicache
-                function resolveWhenKeyIsCached() {
-                  return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
-                    if (keys.all.length === 0) {
-                      return new Promise(function(resolve) {
-                        setTimeout(function() {
-                          resolve(resolveWhenKeyIsCached())
-                        }, 5)
-                      })
-                    }
+              describe('when cache is compressed', function() {
+                beforeEach(function() {
+                  var mockAPI = api.server
+                  var app = mockAPI.create('2 seconds')
+                  this.cache = app.apicache
+                  function resolveWhenKeyIsCached() {
+                    return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
+                      if (keys.all.length === 0) {
+                        return new Promise(function(resolve) {
+                          setTimeout(function() {
+                            resolve(resolveWhenKeyIsCached())
+                          }, 5)
+                        })
+                      }
+                    })
+                  }
+                  return request(app)
+                    .get('/api/bigresponse')
+                    .expect(200)
+                    .then(function(res) {
+                      expect(res.text.slice(0, 5)).to.equal('aaaaa')
+                      expect(res.text.slice(-5)).to.equal('final')
+                    })
+                    .then(resolveWhenKeyIsCached)
+                })
+
+                if (meta.clientName === 'redis') {
+                  afterEach(function(done) {
+                    db.flushdb(done)
                   })
                 }
-                return request(app)
-                  .get('/api/movies')
-                  .expect(200, movies)
-                  .then(resolveWhenKeyIsCached)
+
+                it("return it's formatted value", function() {
+                  return this.cache
+                    .get(this.cache.getKey({ method: 'GET', url: '/api/bigresponse' }))
+                    .then(function(value) {
+                      expect(value.status).to.equal(200)
+                      if (api.name === 'restify+gzip') {
+                        // cache won't be compressed
+                        expect(value.headers['content-encoding'] || 'identity').to.equal('identity')
+                      } else {
+                        // depending on node version, can be br or gzip
+                        expect(value.headers['content-encoding'] || 'identity').to.not.equal(
+                          'identity'
+                        )
+                      }
+                      expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+                      expect(value.data.slice(0, 5)).to.equal('aaaaa')
+                      expect(value.data.slice(-5)).to.equal('final')
+                      expect(value.timestamp).to.be.below(Date.now())
+                    })
+                })
               })
 
-              if (meta.clientName === 'redis') {
-                afterEach(function(done) {
-                  db.flushdb(done)
+              describe("when cache isn't compressed", function() {
+                beforeEach(function() {
+                  var mockAPI = api.server
+                  var app = mockAPI.create('2 seconds')
+                  this.cache = app.apicache
+                  function resolveWhenKeyIsCached() {
+                    return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
+                      if (keys.all.length === 0) {
+                        return new Promise(function(resolve) {
+                          setTimeout(function() {
+                            resolve(resolveWhenKeyIsCached())
+                          }, 5)
+                        })
+                      }
+                    })
+                  }
+                  return request(app)
+                    .get('/api/movies')
+                    .expect(200, movies)
+                    .then(resolveWhenKeyIsCached)
                 })
-              }
 
-              it("return it's formatted value", function() {
-                return this.cache
-                  .get(this.cache.getKey({ method: 'GET', url: '/api/movies' }))
-                  .then(function(value) {
-                    expect(value.status).to.equal(200)
-                    expect(value.headers['cache-control']).to.equal('max-age=10, must-revalidate')
-                    expect(value.data).to.eql(movies)
+                if (meta.clientName === 'redis') {
+                  afterEach(function(done) {
+                    db.flushdb(done)
                   })
+                }
+
+                it("return it's formatted value", function() {
+                  return this.cache
+                    .get(this.cache.getKey({ method: 'GET', url: '/api/movies' }))
+                    .then(function(value) {
+                      expect(value.status).to.equal(200)
+                      expect(value.headers['content-encoding'] || 'identity').to.equal('identity')
+                      expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+                      expect(value.data).to.eql(movies)
+                      expect(value.timestamp).to.be.below(Date.now())
+                    })
+                })
               })
             })
           })
