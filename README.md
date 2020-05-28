@@ -33,6 +33,10 @@ app.get('/api/collection/:id?', apicache('5 minutes'), (req, res) => {
 #### Cache all routes
 
 ```js
+import apicache from 'apicache-plus'
+import express from 'express'
+const app = express()
+
 app.use(apicache('5 minutes'))
 
 app.get('/will-be-cached', (req, res) => {
@@ -43,10 +47,9 @@ app.get('/will-be-cached', (req, res) => {
 #### Use with Redis for multiple benefits
 
 ```js
-import express from 'express'
 import apicache from 'apicache-plus'
 import redis from 'redis'
-
+import express from 'express'
 const app = express()
 
 // if redisClient option is defined, apicache will use redis client
@@ -66,59 +69,61 @@ ioredis client is also supported.
 #### Works great with compression middleware for lightning fast responses
 
 ```js
-import express from 'express'
 import compression from 'compression'
 import apicache from 'apicache-plus'
-
+import express from 'express'
 const app = express()
 
-app.use(compression()).use(apicache('5 minutes'))
+app.use(compression())
+app.use(apicache('5 minutes'))
 ```
 
-#### Cache grouping and manual controls
+#### Purge cache easily whenever required
 
 ```js
 import apicache from 'apicache-plus'
+import express from 'express'
+const app = express()
 
-// add route to display cache index
-app.get('/api/cache/index', (req, res) => {
-  res.json(apicache.getIndex())
+// cache all routes
+app.use(apicache('1 hour'))
+
+// show all books
+app.get('/api/books', (req, res) => {
+  // all GET requests to /api/books with any query/body params will be grouped for later purging
+  req.apicacheGroup = 'bookList'
+
+  res.json(Book.all(req.query))
 })
 
-// add route to manually clear target/group
-app.delete('/api/cache/clear/:target?', (req, res) => {
-  res.json(apicache.clear(req.params.target))
+// add a book, then purge related cache
+app.post('/api/books', (req, res) => {
+  Book.create(req.body.book)
+  // purge now that book list should be updated with one more book
+  apicache.clear('bookList')
+  res.end()
 })
 
-// add route to display cache performance
-app.get('/api/cache/performance', (req, res) => {
-  res.json(apicache.getPerformance())
+// delete a book, then purge related cache
+app.delete('/api/books/:id', (req, res) => {
+  Book.delete(req.params.id)
+  // purge now that book list should be updated with one less book
+  apicache.clear('bookList')
+  res.end()
 })
-
-app.use(apicache('5 minutes'))
-
-// routes are automatically added to index, but may be further added
-// to groups for quick deleting of collections
-app.get('/api/:collection/:item?', (req, res) => {
-  req.apicacheGroup = req.params.collection
-  res.json({ success: true })
-})
-
-/*
-
-GET /api/foo/bar --> caches entry at /api/foo/bar and adds a group called 'foo' to index
-GET /api/cache/index --> displays index
-DELETE /api/cache/clear/foo --> clears all cached entries for 'foo' group/collection
-
-*/
 ```
+
+**Note:** It is better to purge by apicacheGroup name as shown above instead of purging by key name so to not need to manually overwrite Cache-Control header nor mess with key name creation logic
 
 #### Use with middleware toggle for fine control
 
 ```js
+import apicache from 'apicache-plus'
+import express from 'express'
+const app = express()
+
 // the default config is good enough, but if e.g you want to cache only responses of status 200
 const onlyStatus200 = (req, res) => res.statusCode === 200
-
 const cacheSuccesses = apicache('5 minutes', onlyStatus200)
 
 app.get('/api/missing', cacheSuccesses, (req, res) => {
@@ -127,6 +132,65 @@ app.get('/api/missing', cacheSuccesses, (req, res) => {
 
 app.get('/api/found', cacheSuccesses, (req, res) => {
   res.json({ results: 'will be cached' })
+})
+```
+
+## Custom Cache Keys
+
+Sometimes you need custom keys (e.g. save routes per-session / user).
+We've made it easy!
+
+**Note:** All req/res attributes used in the generation of the key must have been set
+previously (upstream). The entire route logic block is skipped on future cache hits
+so it can't rely on those params.
+
+```js
+import apicache from 'apicache-plus'
+
+apicache.options({
+  append: (req, res) => res.session.id,
+})
+```
+
+## Unleash caching power with manual control
+
+You may want to manually cache any value to retrieve super fast later if needed (with or without using apicache as middleware, you decide).
+
+```js
+import apicache from 'apicache-plus'
+import express from 'express'
+const app = express()
+
+// "authenticate" is supposed to be a middleware that would set req.userId = id
+app.use(authenticate)
+// Optional: use apicache to cache routes
+app.use(
+  apicache(
+    '5 minutes',
+    null, // no toggle defined
+    { append: req => req.userId } // custom option to separate cache by user
+  )
+)
+
+app.get('api/books', async function(req, res) {
+  let books
+
+  // check if what you want is already cached
+  if (await apicache.has('books')) {
+    // manually fetch from cache what you want
+    books = await apicache.get('books')
+  } else {
+    books =
+      fetch('https://www.external-api.com/all-books')
+        .then(res => res.json())
+        .then(books => {
+          // manually cache what you want, for how long you need
+          await apicache.set('books', books, '1 hour')
+          return books
+        })
+  }
+
+  res.json(filterByUser(books, req.userId))
 })
 ```
 
@@ -142,7 +206,7 @@ app.get('/api/found', cacheSuccesses, (req, res) => {
 - `apicache.set(key, value, [duration], [group], [expirationCallback])` - manually store anything you want (async)
 - `apicache.get()` - get stored value by key (async)
 - `apicache.has(key)` - check if key exists (async)
-- `apicache.getKey(keyParts)` - useful for getting key name from auto caching middleware. Usage: `const key = await apicache.getKey({ method: 'GET', url: '/api/users/15', params: {}, appendice: '' })` then `await apicache.get(key)`
+- `apicache.getKey(keyParts)` - useful for getting key name from auto caching middleware. Usage: `const key = await apicache.getKey({ method: 'GET', url: '/api/books/15', params: { aQueryParamX: 'value 1', aBodyParamY: 'value 2' }, appendice: 'userid-123-abc' })` then `await apicache.get(key)`
 - `apicache.newInstance([options])` - used to create a new ApiCache instance (by default, simply requiring this library shares a common instance)
 - `apicache.clone()` - used to create a new ApiCache instance with the same options as the current one
 
@@ -151,11 +215,11 @@ app.get('/api/found', cacheSuccesses, (req, res) => {
 ```js
 {
   debug:                false|true,         // if true, enables console output
-  defaultDuration:      '1 hour',           // should be either a number (in ms) or a string, defaults to 1 hour
+  defaultDuration:      '1 hour',           // should be either a number (in ms) or a number with a string, defaults to 1 hour
   enabled:              true|false,         // if false, turns off caching globally (useful on dev)
   isBypassable:         false|true,         // if true, bypasses cache by requesting with Cache-Control: no-store header
-  redisClient:          client,             // if provided, uses the [node-redis](https://github.com/NodeRedis/node_redis) client instead of [memory-cache](https://github.com/ptarjan/node-cache)
-  appendKey:            fn(req, res),       // appendKey takes the req/res objects and returns a custom value to extend the cache key
+  redisClient:          client,             // if provided, uses the [node-redis](https://github.com/NodeRedis/node_redis) or [ioredis](https://github.com/luin/ioredis) client instead of built-in memory cache
+  append:               fn(req, res),       // append takes the req/res objects and returns a custom value to extend the cache key
   interceptKeyParts:    fn(req, res, parts) // change url key name. For instance, if you want to cache with same key all requests to an url with any method (GET, POST etc), function(req, res, parts) { parts.method = ''; return parts }
   headerBlacklist:      [],                 // list of headers that should never be cached
   statusCodes: {                            // in most cases there is no need to set it as the default config will be enough
@@ -177,59 +241,6 @@ app.get('/api/found', cacheSuccesses, (req, res) => {
 $ npm install -D @types/apicache
 ```
 
-## Custom Cache Keys
-
-Sometimes you need custom keys (e.g. save routes per-session / user).
-We've made it easy!
-
-**Note:** All req/res attributes used in the generation of the key must have been set
-previously (upstream). The entire route logic block is skipped on future cache hits
-so it can't rely on those params.
-
-```js
-apicache.options({
-  appendKey: (req, res) => res.session.id,
-})
-```
-
-## Cache Key Groups
-
-Oftentimes it benefits us to group cache entries, for example, by collection (in an API). This
-would enable us to clear all cached "post" requests if we updated something in the "post" collection
-for instance. Adding a simple `req.apicacheGroup = [somevalue];` to your route enables this. See example below:
-
-```js
-import apicache from 'apicache-plus'
-
-// GET collection/id
-app.get('/api/:collection/:id?', apicache('1 hour'), function(req, res, next) {
-  req.apicacheGroup = req.params.collection
-  // do some work
-  res.send({ foo: 'bar' })
-})
-
-// POST collection/id
-app.post('/api/:collection/:id?', function(req, res, next) {
-  // update model
-  apicache.clear(req.params.collection)
-  res.send('added a new item, so the cache has been cleared')
-})
-```
-
-Additionally, you could add manual cache control to the previous project with routes such as these:
-
-```js
-// GET apicache index (for the curious)
-app.get('/api/cache/index', function(req, res, next) {
-  res.send(apicache.getIndex())
-})
-
-// DELETE apicache group
-app.delete('/api/cache/clear/:group?', function(req, res, next) {
-  res.send(200, apicache.clear(req.params.group || req.query.group))
-})
-```
-
 ## Debugging/Console Out
 
 #### Using Node environment variables (plays nicely with the hugely popular [debug](https://www.npmjs.com/package/debug) module)
@@ -249,6 +260,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.0.1** - fix cache.get(autoKeyName) when cache is compressed and make headerBlacklist case-insensitive
 - **v2.0.0** - major launch with better defaults for easier usage, manual caching (.get, .set, .has), new options and improved compatibility with third-party compression middlewares
 - **v1.8.0** - add isBypassable and afterHit options and extra 304 condition checks
 - **v1.7.0** - enforce request idempotence by cache key when not cached yet
