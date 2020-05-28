@@ -694,6 +694,12 @@ function ApiCache() {
   var syncOptions = (function() {
     function syncOptionsByIndex(i) {
       Object.assign(middlewareOptions[i].options, globalOptions, middlewareOptions[i].localOptions)
+      var options = middlewareOptions[i].options
+      if (options.headerBlacklist) {
+        options.headerBlacklist = options.headerBlacklist.map(function(v) {
+          return v.toLowerCase()
+        })
+      }
     }
 
     return function(i) {

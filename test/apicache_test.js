@@ -1270,6 +1270,25 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
+      it('does not cache header in headerBlacklist with any letter case', function() {
+        var app = mockAPI.create('10 seconds', { headerBlacklist: ['X-blacklisteD'] })
+
+        return request(app)
+          .get('/api/testheaderblacklist')
+          .expect(200, movies)
+          .then(function(res) {
+            expect(res.headers['x-blacklisted']).to.equal(res.headers['x-notblacklisted'])
+            return request(app)
+              .get('/api/testheaderblacklist')
+              .set('Accept', 'application/json')
+              .expect('Content-Type', /json/)
+              .expect(200, movies)
+              .then(function(res2) {
+                expect(res2.headers['x-blacklisted']).to.not.equal(res2.headers['x-notblacklisted'])
+              })
+          })
+      })
+
       it('properly returns a cached JSON request', function() {
         var app = mockAPI.create('10 seconds')
 
