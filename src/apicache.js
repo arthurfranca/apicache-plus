@@ -694,6 +694,12 @@ function ApiCache() {
   var syncOptions = (function() {
     function syncOptionsByIndex(i) {
       Object.assign(middlewareOptions[i].options, globalOptions, middlewareOptions[i].localOptions)
+      var options = middlewareOptions[i].options
+      if (options.headerBlacklist) {
+        options.headerBlacklist = options.headerBlacklist.map(function(v) {
+          return v.toLowerCase()
+        })
+      }
     }
 
     return function(i) {
@@ -820,19 +826,30 @@ function ApiCache() {
         return cached
       }
 
-      // try formatting
+      // try formatting and decompressing
       try {
         var data = cached.data
         if ([null, undefined].indexOf(data) === -1) {
-          data = data.toString(cached.encoding)
-          try {
-            data = JSON.parse(data)
-          } catch (err) {}
+          if (Buffer.byteLength(data) === 0) data = ''
+          else {
+            var cachedEncoding = cached.headers['content-encoding']
+            if (cachedEncoding && cachedEncoding !== 'identity') {
+              var decompress = {
+                br: zlib.brotliDecompressSync,
+                gzip: zlib.unzipSync,
+                deflate: zlib.unzipSync,
+              }[cachedEncoding]
+              if (decompress) data = decompress(data)
+            }
+            data = data.toString(cached.encoding)
+            try {
+              data = JSON.parse(data)
+            } catch (err) {}
+          }
         }
 
-        // don't send with all properties
+        // don't send with all properties if it's really what apicache regularly stores
         // (e.g. encoding as it was already used above for parsing and redis data-extra-pttl prop)
-        // if it's really what apicache regularly stores
         return {
           status: cached.status,
           headers: cached.headers,
