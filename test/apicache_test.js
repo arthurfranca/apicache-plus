@@ -1022,7 +1022,15 @@ describe('.middleware {MIDDLEWARE}', function() {
                     .expect('Cache-Control', 'no-store')
                     .then(function() {
                       expect(that.app.requestsProcessed).to.equal(1)
+                      var key = that.app.apicache.getKey({
+                        method: method === 'del' ? 'delete' : method,
+                        url: '/api/nongethead',
+                      })
+                      return that.app.apicache.get(key)
                     })
+                })
+                .then(function(cached) {
+                  expect(cached.headers['cache-control']).to.equal('no-store')
                 })
             })
           })

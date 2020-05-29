@@ -323,17 +323,19 @@ function ApiCache() {
 
       // add cache control headers
       if (!options.headers['cache-control'] && !res._currentResponseHeaders['cache-control']) {
-        if (
-          SAFE_HTTP_METHODS.indexOf(req.method) !== -1 &&
-          shouldCacheRes(req, res, toggle, options)
-        ) {
+        if (shouldCacheRes(req, res, toggle, options)) {
           var cacheControl
-          var syncedMaxAge = Math.ceil(duration / 1000)
-          cacheControl = getCacheControlMaxAge(
-            syncedMaxAge,
-            req.apicacheGroup,
-            options.shouldSyncExpiration
-          )
+          if (SAFE_HTTP_METHODS.indexOf(req.method) !== -1) {
+            var syncedMaxAge = Math.ceil(duration / 1000)
+            cacheControl = getCacheControlMaxAge(
+              syncedMaxAge,
+              req.apicacheGroup,
+              options.shouldSyncExpiration
+            )
+          } else {
+            cacheControl = 'no-store'
+          }
+
           res.setHeader('cache-control', cacheControl)
           res._currentResponseHeaders['cache-control'] = cacheControl
         } else {
