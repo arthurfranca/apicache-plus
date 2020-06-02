@@ -468,7 +468,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
           .then(function(value) {
             expect(value.status).to.equal(200)
-            expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+            expect(value.headers['cache-control']).to.equal('private, max-age=2, must-revalidate')
             expect(value.data).to.eql(movies)
             return request(that.app)
               .get('/api/getkey')
@@ -583,7 +583,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
           return request(this.app)
             .get('/api/getkey')
-            .expect('Cache-Control', 'max-age=2, must-revalidate')
+            .expect('Cache-Control', 'private, max-age=2, must-revalidate')
             .expect(200, movies)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -591,7 +591,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             })
             .then(function(value) {
               expect(value.status).to.equal(200)
-              expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+              expect(value.headers['cache-control']).to.equal('private, max-age=2, must-revalidate')
               expect(value.data).to.eql(movies)
               return request(that.app)
                 .post('/api/getkeyinterception')
@@ -602,7 +602,7 @@ describe('.middleware {MIDDLEWARE}', function() {
               expect(that.app.requestsProcessed).to.equal(1)
               return request(that.app)
                 .get('/api/getkey')
-                .expect('Cache-Control', 'max-age=2, must-revalidate')
+                .expect('Cache-Control', 'private, max-age=2, must-revalidate')
                 .expect(200, movies)
             })
             .then(function(value) {
@@ -649,7 +649,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
           return request(this.app)
             .get('/api/getkey')
-            .expect('Cache-Control', 'max-age=2, must-revalidate')
+            .expect('Cache-Control', 'private, max-age=2, must-revalidate')
             .expect(200, movies)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -657,7 +657,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             })
             .then(function(value) {
               expect(value.status).to.equal(200)
-              expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+              expect(value.headers['cache-control']).to.equal('private, max-age=2, must-revalidate')
               expect(value.data).to.eql(movies)
               return request(that.app)
                 .post('/api/getkeyinterception')
@@ -668,7 +668,7 @@ describe('.middleware {MIDDLEWARE}', function() {
               expect(that.app.requestsProcessed).to.equal(1)
               return request(that.app)
                 .get('/api/getkey')
-                .expect('Cache-Control', 'max-age=2, must-revalidate')
+                .expect('Cache-Control', 'private, max-age=2, must-revalidate')
                 .expect(200, movies)
             })
             .then(function(value) {
@@ -1262,6 +1262,22 @@ describe('.middleware {MIDDLEWARE}', function() {
             return request(app)
               .get('/api/movies')
               .expect('Cache-Control', 'max-age=40, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      it('return private cache-control when options.append is set', function() {
+        var app = mockAPI.create('40 seconds', { shouldSyncExpiration: true, append: () => null })
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'private, max-age=40, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'private, max-age=40, must-revalidate')
               .then(assertNumRequestsProcessed(app, 1))
           })
       })
