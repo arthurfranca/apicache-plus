@@ -995,7 +995,29 @@ function ApiCache() {
     }
   }
 
+  function isLocalOptions(value) {
+    return value !== null && typeof value === 'object'
+  }
+  function isMiddlewareToggle(value) {
+    return typeof value === 'function'
+  }
   this.middleware = function cache(strDuration, middlewareToggle, localOptions) {
+    // Apicache#middleware(localOptions)
+    if (isLocalOptions(strDuration)) {
+      localOptions = strDuration
+      middlewareToggle = null
+      strDuration = null
+      // Apicache#middleware(middlewareToggle[, localOptions])
+    } else if (isMiddlewareToggle(strDuration)) {
+      localOptions = middlewareToggle
+      middlewareToggle = strDuration
+      strDuration = null
+      // Apicache#middleware([strDuration[, middlewareToggle[, localOptions]]])
+    } else if (isLocalOptions(middlewareToggle)) {
+      localOptions = middlewareToggle
+      middlewareToggle = null
+    }
+
     if (!localOptions) localOptions = {}
     var duration = parseDuration(strDuration)
     var opt = {}
@@ -1009,7 +1031,7 @@ function ApiCache() {
       if (localOptions) {
         if (localOptions.defaultDuration) {
           localOptions.defaultDuration = parseDuration(localOptions.defaultDuration)
-          duration = localOptions.defaultDuration
+          if ([null, undefined].indexOf(strDuration) !== -1) duration = localOptions.defaultDuration
         }
         middlewareOptions[middlewareOptionsIndex].localOptions = localOptions
         syncOptions(middlewareOptionsIndex)
