@@ -280,6 +280,145 @@ describe('.middleware {MIDDLEWARE}', function() {
     expect(middleware.length).to.equal(3)
   })
 
+  describe('signature', function() {
+    var apicache = require('../src/apicache').newInstance()
+
+    ;[
+      {
+        name: 'regular function',
+        fn: apicache.middleware.bind(apicache),
+      },
+      {
+        name: 'shortcut function',
+        fn: apicache,
+      },
+    ].forEach(function(fnConfig) {
+      describe(`of ${fnConfig.name}`, function() {
+        var middlewareFn = fnConfig.fn
+
+        it('Apicache#middleware(localOptions)', function() {
+          var middleware = middlewareFn({ defaultDuration: 1 })
+          expect(middleware.options().defaultDuration).to.equal(1)
+        })
+
+        it('Apicache#middleware(middlewareToggle, localOptions)', function() {
+          var middlewareToggleCallCount = 0
+          var middleware = apicache(
+            function() {
+              middlewareToggleCallCount++
+              return false
+            },
+            { defaultDuration: 1000 }
+          )
+          var app = express()
+            .use(middleware)
+            .get('/api/signature', function(_req, res) {
+              app.requestsProcessed++
+              res.end()
+            })
+          app.requestsProcessed = 0
+
+          return request(app)
+            .get('/api/signature')
+            .expect(200)
+            .then(function() {
+              return request(app)
+                .get('/api/signature')
+                .expect(200)
+                .then(function() {
+                  expect(middlewareToggleCallCount).to.equal(2)
+                  expect(app.requestsProcessed).to.equal(2)
+                  expect(middleware.options().defaultDuration).to.equal(1000)
+                })
+            })
+        })
+
+        it('Apicache#middleware(duration, localOptions)', function() {
+          var middleware = apicache(40, { defaultDuration: 60000 })
+          var app = express()
+            .use(middleware)
+            .get('/api/signature', function(_req, res) {
+              app.requestsProcessed++
+              res.end()
+            })
+          app.requestsProcessed = 0
+          var key = apicache.getKey({ method: 'get', url: '/api/signature' })
+
+          return request(app)
+            .get('/api/signature')
+            .expect(200)
+            .then(function() {
+              return request(app)
+                .get('/api/signature')
+                .expect(200)
+                .then(function() {
+                  expect(app.requestsProcessed).to.equal(1)
+                  expect(middleware.options().defaultDuration).to.equal(60000)
+                  return apicache.has(key)
+                })
+                .then(function(hasValue) {
+                  expect(hasValue).to.equal(true)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      resolve(apicache.has(key))
+                    }, 40)
+                  })
+                })
+                .then(function(hasValue) {
+                  expect(hasValue).to.equal(false)
+                })
+            })
+        })
+
+        it('Apicache#middleware(duration, middlewareToggle, localOptions)', function() {
+          var middlewareToggleCallCount = 0
+          var middleware = apicache(
+            40,
+            function() {
+              middlewareToggleCallCount++
+              return true
+            },
+            { defaultDuration: 60000 }
+          )
+          var app = express()
+            .use(middleware)
+            .get('/api/signature', function(_req, res) {
+              app.requestsProcessed++
+              res.end()
+            })
+          app.requestsProcessed = 0
+          var key = apicache.getKey({ method: 'get', url: '/api/signature' })
+
+          return request(app)
+            .get('/api/signature')
+            .expect(200)
+            .then(function() {
+              return request(app)
+                .get('/api/signature')
+                .expect(200)
+                .then(function() {
+                  expect(middlewareToggleCallCount).to.equal(2)
+                  expect(app.requestsProcessed).to.equal(1)
+                  expect(middleware.options().defaultDuration).to.equal(60000)
+                  return apicache.has(key)
+                })
+                .then(function(hasValue) {
+                  expect(hasValue).to.equal(true)
+                  return new Promise(function(resolve) {
+                    setTimeout(function() {
+                      resolve(apicache.has(key))
+                    }, 40)
+                  })
+                })
+                .then(function(hasValue) {
+                  expect(hasValue).to.equal(false)
+                })
+            })
+        })
+      })
+    })
+  })
+
   describe('get key name from request properties', function() {
     describe('when parts are complete', function() {
       beforeEach(function() {
@@ -1022,7 +1161,15 @@ describe('.middleware {MIDDLEWARE}', function() {
                     .expect('Cache-Control', 'no-store')
                     .then(function() {
                       expect(that.app.requestsProcessed).to.equal(1)
+                      var key = that.app.apicache.getKey({
+                        method: method === 'del' ? 'delete' : method,
+                        url: '/api/nongethead',
+                      })
+                      return that.app.apicache.get(key)
                     })
+                })
+                .then(function(cached) {
+                  expect(cached.headers['cache-control']).to.equal('no-store')
                 })
             })
           })

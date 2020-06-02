@@ -167,7 +167,6 @@ app.use(authenticate)
 app.use(
   apicache(
     '5 minutes',
-    null, // no toggle defined
     { append: req => req.userId } // custom option to separate cache by user
   )
 )
@@ -175,19 +174,18 @@ app.use(
 app.get('api/books', async function(req, res) {
   let books
 
-  // check if what you want is already cached
+  // manually check if what you want is already cached
   if (await apicache.has('books')) {
     // manually fetch from cache what you want
     books = await apicache.get('books')
   } else {
-    books =
-      fetch('https://www.external-api.com/all-books')
-        .then(res => res.json())
-        .then(books => {
-          // manually cache what you want, for how long you need
-          await apicache.set('books', books, '1 hour')
-          return books
-        })
+    books = await fetch('https://www.external-api.com/all-books')
+      .then(res => res.json())
+      .then(async books => {
+        // manually cache what you want, for how long you need
+        await apicache.set('books', books, '1 hour')
+        return books
+      })
   }
 
   res.json(filterByUser(books, req.userId))
@@ -203,7 +201,7 @@ app.get('api/books', async function(req, res) {
 - `apicache.getPerformance()` - returns current cache performance (cache hit rate)
 - `apicache.getIndex()` - returns current cache index [of keys]
 - `apicache.clear([target])` - clears cache target (key or group), or entire cache if no value passed, returns new index.
-- `apicache.set(key, value, [duration], [group], [expirationCallback])` - manually store anything you want (async)
+- `apicache.set(key, value, [duration[, group[, [expirationCallback]]])` - manually store anything you want (async)
 - `apicache.get()` - get stored value by key (async)
 - `apicache.has(key)` - check if key exists (async)
 - `apicache.getKey(keyParts)` - useful for getting key name from auto caching middleware. Usage: `const key = await apicache.getKey({ method: 'GET', url: '/api/books/15', params: { aQueryParamX: 'value 1', aBodyParamY: 'value 2' }, appendice: 'userid-123-abc' })` then `await apicache.get(key)`
@@ -214,24 +212,24 @@ app.get('api/books', async function(req, res) {
 
 ```js
 {
-  debug:                false|true,         // if true, enables console output
-  defaultDuration:      '1 hour',           // should be either a number (in ms) or a number with a string, defaults to 1 hour
-  enabled:              true|false,         // if false, turns off caching globally (useful on dev)
-  isBypassable:         false|true,         // if true, bypasses cache by requesting with Cache-Control: no-store header
-  redisClient:          client,             // if provided, uses the [node-redis](https://github.com/NodeRedis/node_redis) or [ioredis](https://github.com/luin/ioredis) client instead of built-in memory cache
-  append:               fn(req, res),       // append takes the req/res objects and returns a custom value to extend the cache key
-  interceptKeyParts:    fn(req, res, parts) // change url key name. For instance, if you want to cache with same key all requests to an url with any method (GET, POST etc), function(req, res, parts) { parts.method = ''; return parts }
-  headerBlacklist:      [],                 // list of headers that should never be cached
-  statusCodes: {                            // in most cases there is no need to set it as the default config will be enough
-    exclude:            [],                 // list status codes to specifically exclude (e.g. [404, 403] cache all responses unless they had a 404 or 403 status)
-    include:            [],                 // list status codes to require (e.g. [200] caches ONLY responses with a success/200 code)
+  debug:                false|true,          // if true, enables console output
+  defaultDuration:      '1 hour',            // should be either a number (in ms) or a number with a string, defaults to 1 hour
+  enabled:              true|false,          // if false, turns off caching globally (useful on dev)
+  isBypassable:         false|true,          // if true, bypasses cache by requesting with Cache-Control: no-store header
+  redisClient:          client,              // if provided, uses the [node-redis](https://github.com/NodeRedis/node_redis) or [ioredis](https://github.com/luin/ioredis) client instead of built-in memory cache
+  append:               fn(req, res),        // append takes the req/res objects and returns a custom value to extend the cache key
+  interceptKeyParts:    fn(req, res, parts), // change cache key name by altering the parts that make up key name (parts is an object auto-populated like this: { method: 'GET', url: '/api/test', params: { sort: 'desc', page: 2 }, appendice: 'userid-123-abc' }). For instance, if you want to cache with same key all requests to a specific route no matter the method (GET, POST etc): function(req, res, parts) { parts.method = ''; return parts }
+  headerBlacklist:      [],                  // list of headers that should never be cached
+  statusCodes: {                             // in most cases there is no need to set it as the default config will be enough
+    exclude:            [],                  // list status codes to specifically exclude (e.g. [404, 403] cache all responses unless they had a 404 or 403 status)
+    include:            []                   // list status codes to require (e.g. [200] caches ONLY responses with a success/200 code)
   },
-  trackPerformance:     false|true,         // enable/disable performance tracking... WARNING: super cool feature, but may cause memory overhead issues
+  trackPerformance:     false|true,          // enable/disable performance tracking... WARNING: super cool feature, but may cause memory overhead issues
   headers: {
-    // 'cache-control':  'no-cache'         // example of header overwrite
+    // 'cache-control':  'no-cache'          // example of header overwrite
   },
-  afterHit:             fn(req, res),       // run function after cache hits
-  shouldSyncExpiration: false|true          // force max-age to sync with internal cache expiration
+  afterHit:             fn(req, res),        // run function after cache hits
+  shouldSyncExpiration: false|true           // force max-age syncing with internal cache expiration
 }
 ```
 
@@ -260,6 +258,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.0.2** - add .middleware function overloading and improve cache-control setting
 - **v2.0.1** - fix cache.get(autoKeyName) when cache is compressed and make headerBlacklist case-insensitive
 - **v2.0.0** - major launch with better defaults for easier usage, manual caching (.get, .set, .has), new options and improved compatibility with third-party compression middlewares
 - **v1.8.0** - add isBypassable and afterHit options and extra 304 condition checks

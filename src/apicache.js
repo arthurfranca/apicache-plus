@@ -323,17 +323,19 @@ function ApiCache() {
 
       // add cache control headers
       if (!options.headers['cache-control'] && !res._currentResponseHeaders['cache-control']) {
-        if (
-          SAFE_HTTP_METHODS.indexOf(req.method) !== -1 &&
-          shouldCacheRes(req, res, toggle, options)
-        ) {
+        if (shouldCacheRes(req, res, toggle, options)) {
           var cacheControl
-          var syncedMaxAge = Math.ceil(duration / 1000)
-          cacheControl = getCacheControlMaxAge(
-            syncedMaxAge,
-            req.apicacheGroup,
-            options.shouldSyncExpiration
-          )
+          if (SAFE_HTTP_METHODS.indexOf(req.method) !== -1) {
+            var syncedMaxAge = Math.ceil(duration / 1000)
+            cacheControl = getCacheControlMaxAge(
+              syncedMaxAge,
+              req.apicacheGroup,
+              options.shouldSyncExpiration
+            )
+          } else {
+            cacheControl = 'no-store'
+          }
+
           res.setHeader('cache-control', cacheControl)
           res._currentResponseHeaders['cache-control'] = cacheControl
         } else {
@@ -993,7 +995,29 @@ function ApiCache() {
     }
   }
 
+  function isLocalOptions(value) {
+    return value !== null && typeof value === 'object'
+  }
+  function isMiddlewareToggle(value) {
+    return typeof value === 'function'
+  }
   this.middleware = function cache(strDuration, middlewareToggle, localOptions) {
+    // Apicache#middleware(localOptions)
+    if (isLocalOptions(strDuration)) {
+      localOptions = strDuration
+      middlewareToggle = null
+      strDuration = null
+      // Apicache#middleware(middlewareToggle[, localOptions])
+    } else if (isMiddlewareToggle(strDuration)) {
+      localOptions = middlewareToggle
+      middlewareToggle = strDuration
+      strDuration = null
+      // Apicache#middleware([strDuration[, middlewareToggle[, localOptions]]])
+    } else if (isLocalOptions(middlewareToggle)) {
+      localOptions = middlewareToggle
+      middlewareToggle = null
+    }
+
     if (!localOptions) localOptions = {}
     var duration = parseDuration(strDuration)
     var opt = {}
@@ -1007,7 +1031,7 @@ function ApiCache() {
       if (localOptions) {
         if (localOptions.defaultDuration) {
           localOptions.defaultDuration = parseDuration(localOptions.defaultDuration)
-          duration = localOptions.defaultDuration
+          if ([null, undefined].indexOf(strDuration) !== -1) duration = localOptions.defaultDuration
         }
         middlewareOptions[middlewareOptionsIndex].localOptions = localOptions
         syncOptions(middlewareOptionsIndex)
