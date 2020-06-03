@@ -261,6 +261,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.1.1** - fix RedisCache#releaseLockWithId
 - **v2.1.0** - add optimizeDuration option and set 'private' cache when fit
 - **v2.0.2** - add .middleware function overloading and improve cache-control setting
 - **v2.0.1** - fix cache.get(autoKeyName) when cache is compressed and make headerBlacklist case-insensitive
