@@ -468,7 +468,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
           .then(function(value) {
             expect(value.status).to.equal(200)
-            expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+            expect(value.headers['cache-control']).to.equal('private, max-age=2, must-revalidate')
             expect(value.data).to.eql(movies)
             return request(that.app)
               .get('/api/getkey')
@@ -583,7 +583,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
           return request(this.app)
             .get('/api/getkey')
-            .expect('Cache-Control', 'max-age=2, must-revalidate')
+            .expect('Cache-Control', 'private, max-age=2, must-revalidate')
             .expect(200, movies)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -591,7 +591,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             })
             .then(function(value) {
               expect(value.status).to.equal(200)
-              expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+              expect(value.headers['cache-control']).to.equal('private, max-age=2, must-revalidate')
               expect(value.data).to.eql(movies)
               return request(that.app)
                 .post('/api/getkeyinterception')
@@ -602,7 +602,7 @@ describe('.middleware {MIDDLEWARE}', function() {
               expect(that.app.requestsProcessed).to.equal(1)
               return request(that.app)
                 .get('/api/getkey')
-                .expect('Cache-Control', 'max-age=2, must-revalidate')
+                .expect('Cache-Control', 'private, max-age=2, must-revalidate')
                 .expect(200, movies)
             })
             .then(function(value) {
@@ -649,7 +649,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
           return request(this.app)
             .get('/api/getkey')
-            .expect('Cache-Control', 'max-age=2, must-revalidate')
+            .expect('Cache-Control', 'private, max-age=2, must-revalidate')
             .expect(200, movies)
             .then(function() {
               expect(that.app.requestsProcessed).to.equal(1)
@@ -657,7 +657,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             })
             .then(function(value) {
               expect(value.status).to.equal(200)
-              expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
+              expect(value.headers['cache-control']).to.equal('private, max-age=2, must-revalidate')
               expect(value.data).to.eql(movies)
               return request(that.app)
                 .post('/api/getkeyinterception')
@@ -668,7 +668,7 @@ describe('.middleware {MIDDLEWARE}', function() {
               expect(that.app.requestsProcessed).to.equal(1)
               return request(that.app)
                 .get('/api/getkey')
-                .expect('Cache-Control', 'max-age=2, must-revalidate')
+                .expect('Cache-Control', 'private, max-age=2, must-revalidate')
                 .expect(200, movies)
             })
             .then(function(value) {
@@ -705,6 +705,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
@@ -723,6 +724,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
 
@@ -770,6 +772,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: afterHit,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
@@ -788,6 +791,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
 
@@ -825,6 +829,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
@@ -843,6 +848,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
 
@@ -891,6 +897,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: true,
@@ -909,6 +916,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
   })
@@ -1262,6 +1270,45 @@ describe('.middleware {MIDDLEWARE}', function() {
             return request(app)
               .get('/api/movies')
               .expect('Cache-Control', 'max-age=40, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      it('return private cache-control when options.append is set', function() {
+        var app = mockAPI.create('40 seconds', { shouldSyncExpiration: true, append: () => null })
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'private, max-age=40, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'private, max-age=40, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      // naive optimization that just makes sure duration isn't higher than 5 min when append is set
+      // a better one would probably need stats recording
+      // and is not that useful when maxMemory option is set
+      it('lower cache duration when optimizeDuration is on', function() {
+        var app = mockAPI.create('10 minutes', {
+          shouldSyncExpiration: true,
+          optimizeDuration: true,
+          append: () => null,
+        })
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'private, max-age=300, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'private, max-age=300, must-revalidate')
               .then(assertNumRequestsProcessed(app, 1))
           })
       })

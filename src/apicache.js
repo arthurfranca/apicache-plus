@@ -12,6 +12,7 @@ var helpers = require('./helpers')
 var setLongTimeout = helpers.setLongTimeout
 var clearLongTimeout = helpers.clearLongTimeout
 
+var FIVE_MINUTES = 5 * 60 * 1000
 var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
 var CACHEABLE_STATUS_CODES = {
   200: null,
@@ -90,6 +91,7 @@ function ApiCache() {
     shouldSyncExpiration: false,
     afterHit: null,
     trackPerformance: false,
+    optimizeDuration: false,
   }
 
   var middlewareOptions = []
@@ -256,13 +258,14 @@ function ApiCache() {
     }
   }
 
-  function getCacheControlMaxAge(syncedMaxAge, group, shouldSyncExpiration) {
+  function getCacheControlMaxAge(syncedMaxAge, group, options) {
     var maxAge
     if (group) maxAge = Math.min(3, syncedMaxAge)
-    else if (!shouldSyncExpiration) maxAge = Math.min(30, syncedMaxAge)
+    else if (!options.shouldSyncExpiration) maxAge = Math.min(30, syncedMaxAge)
     else maxAge = syncedMaxAge
 
-    return 'max-age=' + maxAge.toFixed(0) + ', must-revalidate'
+    var directive = options.append || options.appendKey ? 'private, ' : '' // public is default
+    return directive + 'max-age=' + maxAge.toFixed(0) + ', must-revalidate'
   }
 
   function makeResponseCacheable(
@@ -327,11 +330,7 @@ function ApiCache() {
           var cacheControl
           if (SAFE_HTTP_METHODS.indexOf(req.method) !== -1) {
             var syncedMaxAge = Math.ceil(duration / 1000)
-            cacheControl = getCacheControlMaxAge(
-              syncedMaxAge,
-              req.apicacheGroup,
-              options.shouldSyncExpiration
-            )
+            cacheControl = getCacheControlMaxAge(syncedMaxAge, req.apicacheGroup, options)
           } else {
             cacheControl = 'no-store'
           }
@@ -535,11 +534,7 @@ function ApiCache() {
     else if (SAFE_HTTP_METHODS.indexOf(request.method) !== -1) {
       if (cacheObjectHeaders['cache-control']) cacheControl = cacheObjectHeaders['cache-control']
       else {
-        cacheControl = getCacheControlMaxAge(
-          updatedMaxAge,
-          request.apicacheGroup,
-          options.shouldSyncExpiration
-        )
+        cacheControl = getCacheControlMaxAge(updatedMaxAge, request.apicacheGroup, options)
       }
     } else cacheControl = 'no-store'
 
@@ -1213,15 +1208,11 @@ function ApiCache() {
         return bypass()
       }
 
-      // REMOVED IN 0.11.1 TO CORRECT MIDDLEWARE TOGGLE EXECUTE ORDER
-      // if (typeof middlewareToggle === 'function') {
-      //   if (!middlewareToggle(req, res)) return bypass()
-      // } else if (middlewareToggle !== undefined && !middlewareToggle) {
-      //   return bypass()
-      // }
-
       // this can change at runtime
       duration = instance.getDuration(duration)
+      if (opt.optimizeDuration && opt.append && duration > FIVE_MINUTES) {
+        duration = FIVE_MINUTES
+      }
 
       // embed timer
       req.apicacheTimer = new Date()
