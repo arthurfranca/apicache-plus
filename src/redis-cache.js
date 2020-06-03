@@ -102,7 +102,7 @@ RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
 }
 
 var DELETE_IF_IT_IS_HELD_BY_SAME_CLIENT_ID = `
-  value = redis.call("get",KEYS[1])
+  local value = redis.call("get",KEYS[1])
   if value == false then return 1 end
 
   if string.sub(value, 1, string.len(ARGV[1])) == ARGV[1] then
