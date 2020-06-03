@@ -12,6 +12,7 @@ var helpers = require('./helpers')
 var setLongTimeout = helpers.setLongTimeout
 var clearLongTimeout = helpers.clearLongTimeout
 
+var FIVE_MINUTES = 5 * 60 * 1000
 var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
 var CACHEABLE_STATUS_CODES = {
   200: null,
@@ -90,6 +91,7 @@ function ApiCache() {
     shouldSyncExpiration: false,
     afterHit: null,
     trackPerformance: false,
+    optimizeDuration: false,
   }
 
   var middlewareOptions = []
@@ -1206,15 +1208,11 @@ function ApiCache() {
         return bypass()
       }
 
-      // REMOVED IN 0.11.1 TO CORRECT MIDDLEWARE TOGGLE EXECUTE ORDER
-      // if (typeof middlewareToggle === 'function') {
-      //   if (!middlewareToggle(req, res)) return bypass()
-      // } else if (middlewareToggle !== undefined && !middlewareToggle) {
-      //   return bypass()
-      // }
-
       // this can change at runtime
       duration = instance.getDuration(duration)
+      if (opt.optimizeDuration && opt.append && duration > FIVE_MINUTES) {
+        duration = FIVE_MINUTES
+      }
 
       // embed timer
       req.apicacheTimer = new Date()

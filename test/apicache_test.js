@@ -705,6 +705,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
@@ -723,6 +724,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
 
@@ -770,6 +772,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: afterHit,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
@@ -788,6 +791,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
 
@@ -825,6 +829,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: false,
@@ -843,6 +848,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
 
@@ -891,6 +897,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
       expect(middleware2.options()).to.eql({
         debug: true,
@@ -909,6 +916,7 @@ describe('.middleware {MIDDLEWARE}', function() {
         shouldSyncExpiration: false,
         afterHit: null,
         trackPerformance: false,
+        optimizeDuration: false,
       })
     })
   })
@@ -1278,6 +1286,28 @@ describe('.middleware {MIDDLEWARE}', function() {
             return request(app)
               .get('/api/movies')
               .expect('Cache-Control', 'private, max-age=40, must-revalidate')
+              .then(assertNumRequestsProcessed(app, 1))
+          })
+      })
+
+      // temp naive optimization as a better one would probably need stats recording
+      // for now it just makes sure duration is lower than 5 min when append is set
+      it('lower cache duration when optimizeDuration is on', function() {
+        var app = mockAPI.create('10 minutes', {
+          shouldSyncExpiration: true,
+          optimizeDuration: true,
+          append: () => null,
+        })
+
+        return request(app)
+          .get('/api/movies')
+          .expect('Cache-Control', 'private, max-age=300, must-revalidate')
+          .expect(200, movies)
+          .then(assertNumRequestsProcessed(app, 1))
+          .then(function() {
+            return request(app)
+              .get('/api/movies')
+              .expect('Cache-Control', 'private, max-age=300, must-revalidate')
               .then(assertNumRequestsProcessed(app, 1))
           })
       })
