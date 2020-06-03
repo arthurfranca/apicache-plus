@@ -171,15 +171,17 @@ app.use(
   )
 )
 
-app.get('api/books', async function(req, res) {
+app.get('/api/books', async function(req, res) {
   let books
 
   // manually check if what you want is already cached
   if (await apicache.has('books')) {
     // manually fetch from cache what you want
     books = await apicache.get('books')
-  } else {
-    books = await fetch('https://www.external-api.com/all-books')
+  }
+
+  if (!books) {
+    books = await fetch('https://www.slow-external-api.com/all-books')
       .then(res => res.json())
       .then(async books => {
         // manually cache what you want, for how long you need
@@ -229,6 +231,7 @@ app.get('api/books', async function(req, res) {
     // 'cache-control':  'no-cache'          // example of header overwrite
   },
   afterHit:             fn(req, res),        // run function after cache hits
+  optimizeDuration:     false|true,          // it can lower memory comsumption, when not using a cache client with a max memory policy (e.g. LRU key eviction), by overwriting some cache durations
   shouldSyncExpiration: false|true           // force max-age syncing with internal cache expiration
 }
 ```
@@ -258,6 +261,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.1.0** - add optimizeDuration option and set 'private' cache when fit
 - **v2.0.2** - add .middleware function overloading and improve cache-control setting
 - **v2.0.1** - fix cache.get(autoKeyName) when cache is compressed and make headerBlacklist case-insensitive
 - **v2.0.0** - major launch with better defaults for easier usage, manual caching (.get, .set, .has), new options and improved compatibility with third-party compression middlewares

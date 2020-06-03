@@ -1290,8 +1290,9 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
-      // temp naive optimization as a better one would probably need stats recording
-      // for now it just makes sure duration is lower than 5 min when append is set
+      // naive optimization that just makes sure duration isn't higher than 5 min when append is set
+      // a better one would probably need stats recording
+      // and is not that useful when maxMemory option is set
       it('lower cache duration when optimizeDuration is on', function() {
         var app = mockAPI.create('10 minutes', {
           shouldSyncExpiration: true,
