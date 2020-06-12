@@ -2,7 +2,7 @@ var helpers = require('../../src/helpers')
 var setLongTimeout = helpers.setLongTimeout
 var clearLongTimeout = helpers.clearLongTimeout
 
-describe('Timers', function() {
+describe('Timer helpers', function() {
   describe('setLongTimeout', function() {
     beforeEach(function() {
       this.setTimeoutCallCount = 0
