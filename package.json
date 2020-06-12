@@ -37,6 +37,7 @@
     "email": "arturoalemanha@gmail.com"
   },
   "devDependencies": {
+    "@koa/router": "^9.0.1",
     "chai": "^4.2.0",
     "compression": "^1.7.4",
     "coveralls": "^3.0.6",
@@ -53,6 +54,9 @@
     "ioredis": "^4.16.1",
     "ioredis-mock": "^4.19.0",
     "koa": "^2.12.0",
+    "koa-compress": "^4.0.1",
+    "koa-conditional-get": "^2.0.0",
+    "koa-etag": "^3.0.0",
     "mocha": "^6.2.3",
     "nyc": "^14.1.1",
     "prettier": "^1.18.2",
