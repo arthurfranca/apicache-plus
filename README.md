@@ -261,6 +261,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.1.2** - add compressible missing dependency (thanks [@rrgarciach](https://github.com/rrgarciach))
 - **v2.1.1** - fix RedisCache#releaseLockWithId
 - **v2.1.0** - add optimizeDuration option and set 'private' cache when fit
 - **v2.0.2** - add .middleware function overloading and improve cache-control setting
