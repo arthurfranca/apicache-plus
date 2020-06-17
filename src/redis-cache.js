@@ -92,7 +92,7 @@ RedisCache.prototype.acquireLockWithId = function(key, id, pttl) {
                 return reject(err)
               }
 
-              resolve(that._acquireLockWithId(key, id, pttl))
+              resolve(that.acquireLockWithId(key, id, pttl))
             })
           }
         })
