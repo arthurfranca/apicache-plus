@@ -37,6 +37,9 @@
     "email": "arturoalemanha@gmail.com"
   },
   "devDependencies": {
+    "@babel/core": "^7.10.2",
+    "@babel/preset-env": "^7.10.2",
+    "@babel/register": "^7.10.1",
     "@koa/router": "^9.0.1",
     "chai": "^4.2.0",
     "compression": "^1.7.4",
