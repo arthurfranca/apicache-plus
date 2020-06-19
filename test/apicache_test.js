@@ -1232,6 +1232,85 @@ describe('.middleware {MIDDLEWARE}', function() {
         }
       )
 
+      describe('when head request', function() {
+        beforeEach(function() {
+          var that = this
+          this.app = mockAPI.create('10 seconds')
+          this.app.get.restoreDefaultBehavior && this.app.get.restoreDefaultBehavior()
+          this.app.get('/api/headget', function(req, res) {
+            that.app.requestsProcessed++
+            if (isKoa(req)) {
+              req.body = 'headget response'
+            } else {
+              res.write('headget response')
+              res.end()
+            }
+          })
+          this.app.head('/api/headget', function(req, res) {
+            that.app.requestsProcessed++
+            if (isKoa(req)) {
+              req.status = 200
+            } else res.end()
+          })
+        })
+
+        describe('when get is cached', function() {
+          it('fallback to get', function() {
+            var that = this
+
+            return request(this.app)
+              .get('/api/headget')
+              .expect(200, 'headget response')
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(1)
+                return request(that.app)
+                  .head('/api/headget')
+                  .expect(200, undefined)
+              })
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(1)
+                return request(that.app)
+                  .get('/api/headget')
+                  .expect(200, 'headget response')
+              })
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(1)
+              })
+          })
+        })
+
+        describe('when get is not cached', function() {
+          it("doesn't fallback to get", function() {
+            var that = this
+
+            return request(this.app)
+              .head('/api/headget')
+              .expect(200, undefined)
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(1)
+                return request(that.app)
+                  .head('/api/headget')
+                  .expect(200, undefined)
+              })
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(1)
+                return request(that.app)
+                  .get('/api/headget')
+                  .expect(200, 'headget response')
+              })
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(2)
+                return request(that.app)
+                  .get('/api/headget')
+                  .expect(200, 'headget response')
+              })
+              .then(function() {
+                expect(that.app.requestsProcessed).to.equal(2)
+              })
+          })
+        })
+      })
+
       it('returns decremented max-age header when overwritten one is higher than cache duration', function(done) {
         var app = mockAPI.create('10 seconds', { headers: { 'cache-control': 'max-age=15' } })
 
@@ -2211,7 +2290,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             app.apicache.getKey({ method: 'get', url: '/api/movies' })
           )
           done()
-        }, 40)
+        }, 50)
       })
 
       it('run provided function after cache hit', function(done) {

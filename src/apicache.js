@@ -1311,13 +1311,14 @@ function ApiCache() {
         })
       }
 
-      function getCached(key) {
+      function getCached(key, withFallback) {
+        if (withFallback === undefined) withFallback = true
         return Promise.resolve(cache.getValue(key)).then(function(cached) {
           if (cached) {
             cached.key = key
-          } else if (req.method === 'HEAD') {
+          } else if (req.method === 'HEAD' && withFallback) {
             var getMethodKey = getSimilarKeyFromOtherMethod(key, 'head', 'get')
-            return getCached(getMethodKey)
+            return getCached(getMethodKey, false)
           }
 
           return cached
