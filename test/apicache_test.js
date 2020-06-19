@@ -7,6 +7,9 @@ var pkg = require('../package.json')
 var movies = require('./api/lib/data.json')
 var redis = require('ioredis-mock')
 var apicache = require('../src/apicache')
+var helpers = require('../src/helpers')
+var isKoa = helpers.isKoa
+
 // node-redis usage
 redis.createClient = function(options) {
   if (options.prefix) options.keyPrefix = options.prefix
@@ -32,14 +35,19 @@ redis.createClient = function(options) {
 var revertedCompressionApis = [
   { name: 'express+gzip (after)', server: require('./api/express-gzip-after') },
   { name: 'restify+gzip (after)', server: require('./api/restify-gzip-after') },
+  // as we currently don't manipulate ctx.body (we patch res.write/end),
+  // this regular one acts like a reverted compression api (apicache will receive an already compressed stream)
+  { name: 'koa+compression (after)', server: require('./api/koa-compression') },
 ]
 var compressionApis = [
   { name: 'express+gzip', server: require('./api/express-gzip') },
   { name: 'restify+gzip', server: require('./api/restify-gzip') },
+  { name: 'koa+compression', server: require('./api/koa-compression') },
 ]
 var regularApis = [
   { name: 'express', server: require('./api/express') },
   { name: 'restify', server: require('./api/restify') },
+  { name: 'koa', server: require('./api/koa') },
 ]
 var apis = regularApis.concat(compressionApis)
 
@@ -314,6 +322,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             .use(middleware)
             .get('/api/signature', function(_req, res) {
               app.requestsProcessed++
+              if (isKoa(_req)) return (_req.body = null)
               res.end()
             })
           app.requestsProcessed = 0
@@ -339,6 +348,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             .use(middleware)
             .get('/api/signature', function(_req, res) {
               app.requestsProcessed++
+              if (isKoa(_req)) return (_req.body = null)
               res.end()
             })
           app.requestsProcessed = 0
@@ -384,6 +394,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             .use(middleware)
             .get('/api/signature', function(_req, res) {
               app.requestsProcessed++
+              if (isKoa(_req)) return (_req.body = null)
               res.end()
             })
           app.requestsProcessed = 0
@@ -428,6 +439,8 @@ describe('.middleware {MIDDLEWARE}', function() {
         this.app.get(
           '/api/getkey',
           function(req, _res, next) {
+            if (isKoa(req)) next = _res
+
             req.query = { a: 1, b: [2] }
             req.body = { a: 3, c: 'hi' }
             next()
@@ -439,6 +452,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           }),
           function(req, res) {
             this.app.requestsProcessed++
+            if (isKoa(req)) return (req.body = movies)
             res.json(movies)
           }.bind(this)
         )
@@ -490,6 +504,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           this.cache('2 seconds'),
           function(req, res) {
             this.app.requestsProcessed++
+            if (isKoa(req)) return (req.body = movies)
             res.json(movies)
           }.bind(this)
         )
@@ -539,6 +554,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           this.cache(),
           function(req, res) {
             this.app.requestsProcessed++
+            if (isKoa(req)) return (req.body = movies)
             res.json(movies)
           }.bind(this)
         )
@@ -553,6 +569,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           this.app.get(
             '/api/getkey',
             function(req, _res, next) {
+              if (isKoa(req)) next = _res
               req.query = { a: 1, b: [2] }
               req.body = { a: 3, c: 'hi' }
               next()
@@ -567,6 +584,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             }),
             function(req, res) {
               this.app.requestsProcessed++
+              if (isKoa(req)) return (req.body = movies)
               res.json(movies)
             }.bind(this)
           )
@@ -616,6 +634,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           this.app.get(
             '/api/getkey',
             function(req, _res, next) {
+              if (isKoa(req)) next = _res
               req.query = { a: 1, b: [2] }
               req.body = { a: 3, c: 'hi' }
               next()
@@ -633,6 +652,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             }),
             function(req, res) {
               this.app.requestsProcessed++
+              if (isKoa(req)) return (req.body = movies)
               res.json(movies)
             }.bind(this)
           )
@@ -929,6 +949,7 @@ describe('.middleware {MIDDLEWARE}', function() {
     var middleware = apicache.middleware()
     var app = express()
     app.get('/api/localduration', middleware, function(_req, res) {
+      if (isKoa(_req)) return (_req.body = null)
       res.end()
     })
     apicache.options({
@@ -945,6 +966,7 @@ describe('.middleware {MIDDLEWARE}', function() {
     var middleware = apicache.newInstance().middleware(null, null, { defaultDuration: '2 seconds' })
     var app = express()
     app.get('/api/localduration', middleware, function(_req, res) {
+      if (isKoa(_req)) return (_req.body = null)
       res.end()
     })
     middleware.options({
@@ -962,6 +984,7 @@ describe('.middleware {MIDDLEWARE}', function() {
     var middleware = apicache.middleware(null, null, { defaultDuration: '2 seconds' })
     var app = express()
     app.get('/api/localduration', middleware, function(_req, res) {
+      if (isKoa(_req)) return (_req.body = null)
       res.end()
     })
     middleware.options({
@@ -982,6 +1005,11 @@ describe('.middleware {MIDDLEWARE}', function() {
       var app = express()
       app.requestsProcessed = 0
       function setWrongEncoding(req, res, next) {
+        if (isKoa(req)) {
+          next = res
+          res = req.res
+        }
+
         // should be set inside custom res.writeHead but sometimes isn't
         res.setHeader('Content-Encoding', 'gzip')
 
@@ -997,6 +1025,12 @@ describe('.middleware {MIDDLEWARE}', function() {
       }
       function respond(req, res) {
         app.requestsProcessed++
+        if (isKoa(req)) {
+          req.respond = false
+          res = req.res
+        }
+
+        res.statusCode = 200
         res.setHeader('Content-Type', 'text/plain')
         res.write('wrong encoding')
         res.end()
@@ -1028,6 +1062,11 @@ describe('.middleware {MIDDLEWARE}', function() {
         var app = express()
         app.requestsProcessed = 0
         function changeWriteBehavior(req, res, next) {
+          if (isKoa(req)) {
+            next = res
+            res = req.res
+          }
+
           // should be set inside custom res.writeHead but sometimes isn't
           res.setHeader('Content-Encoding', 'gzip')
 
@@ -1060,6 +1099,10 @@ describe('.middleware {MIDDLEWARE}', function() {
         }
         function respond(_req, res) {
           app.requestsProcessed++
+          if (isKoa(_req)) {
+            _req.respond = false
+            res = _req.res
+          }
           res.statusCode = 201
           res.setHeader('Content-Type', 'text/plain')
           res.write('take this')
@@ -1141,6 +1184,7 @@ describe('.middleware {MIDDLEWARE}', function() {
                 })
             }, 1000)
           })
+          .catch(done)
       })
       ;['post', 'put', 'patch', api.name.indexOf('restify') !== -1 ? 'del' : 'delete'].forEach(
         function(method) {
@@ -1150,7 +1194,11 @@ describe('.middleware {MIDDLEWARE}', function() {
               this.app = mockAPI.create('10 seconds')
               this.app[method]('/api/nongethead', function(req, res) {
                 that.app.requestsProcessed++
-
+                if (isKoa(req)) {
+                  req.respond = false
+                  res = req.res
+                }
+                res.statusCode = 200
                 res.write('non get nor head')
                 res.end()
               })
@@ -1528,6 +1576,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
       it('properly uses custom appendKey(req, res) function', function() {
         var appendKey = function(req, res) {
+          if (isKoa(req)) return req.method + req.state.id
           return req.method + res.id
         }
         var app = mockAPI.create('10 seconds', { append: appendKey })
@@ -2044,6 +2093,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
       it('middlewareToggle works correctly to control statusCode caching (per example)', function() {
         var onlyStatusCode200 = function(req, res) {
+          if (isKoa(req)) res = req.res
           return res.statusCode === 200
         }
 
@@ -2166,6 +2216,7 @@ describe('.middleware {MIDDLEWARE}', function() {
 
       it('run provided function after cache hit', function(done) {
         function afterHit(req, res) {
+          if (isKoa(req)) res = req.res
           expect(req.headers['request-after-hit']).to.equal('1')
           expect((res.getHeaders ? res.getHeaders() : res._headers)['response-after-hit']).to.equal(
             '1'
@@ -2191,6 +2242,11 @@ describe('.middleware {MIDDLEWARE}', function() {
         var responseBody = "{ i: 'am' }"
         var respondWithWriteHeadFirst = function(_req, res) {
           this.app.requestsProcessed++
+          if (isKoa(_req)) {
+            _req.respond = false
+            res = _req.res
+          }
+
           res.writeHead(200)
           res.write(this.responseBody)
           res.end()
@@ -2199,6 +2255,11 @@ describe('.middleware {MIDDLEWARE}', function() {
         var otherResponseBody = { i: 'am' }
         var respondWithWriteFirst = function(_req, res) {
           this.app.requestsProcessed++
+          if (isKoa(_req)) {
+            _req.respond = false
+            res = _req.res
+          }
+          res.statusCode = 200
           res.setHeader('Content-Type', 'application/json')
           res.write(JSON.stringify(this.responseBody))
           res.end()
@@ -2208,6 +2269,11 @@ describe('.middleware {MIDDLEWARE}', function() {
         var anotherResponseBody = /restify/.test(api.name) ? '' : 'hello'
         var respondWithEndFirst = function(_req, res) {
           this.app.requestsProcessed++
+          if (isKoa(_req)) {
+            _req.respond = false
+            res = _req.res
+          }
+          res.statusCode = 200
           res.end(this.responseBody)
         }
 
@@ -2220,9 +2286,23 @@ describe('.middleware {MIDDLEWARE}', function() {
             beforeEach(function() {
               apicache = apicache.newInstance({ enabled: true })
               var cache = apicache.middleware
-              // server: 'restify' or 'x-powered-by': 'Express'
-              this.serverHeader = /restify/.test(api.name) ? 'server' : 'x-powered-by'
-              this.serverHeaderValue = /restify/.test(api.name) ? 'restify' : 'Express'
+              var framework = ['express', 'restify', 'koa'].find(function(framework) {
+                return api.name.indexOf(framework) !== -1
+              })
+              switch (framework) {
+                case 'express':
+                  this.serverHeader = 'x-powered-by'
+                  this.serverHeaderValue = 'Express'
+                  break
+                case 'restify':
+                  this.serverHeader = 'server'
+                  this.serverHeaderValue = 'restify'
+                  break
+                case 'koa':
+                  this.serverHeader = 'x-powered-by'
+                  this.serverHeaderValue = 'tj'
+                  break
+              }
               this.app = mockAPI.create(null, { enabled: false })
               this.skippingMiddleware = cache('2 seconds', function(req) {
                 return req.url !== '/sameroute'
@@ -2250,8 +2330,8 @@ describe('.middleware {MIDDLEWARE}', function() {
               this.app.get(
                 '/sameroute',
                 this.otherRegularMiddleware,
-                // this is starting one cause patched res functions gets called at reverse order
                 this.regularMiddleware,
+                // this is starting one cause patched res functions gets called at reverse order
                 this.skippingMiddleware,
                 this.respond
               )
@@ -2657,7 +2737,8 @@ describe('.middleware {MIDDLEWARE}', function() {
 })
 
 var Compressor = require('../src/compressor')
-apis.concat(revertedCompressionApis).forEach(function(api) {
+// revertedCompressionApis.slice because currently koa reverted is already inside apis array
+apis.concat(revertedCompressionApis.slice(0, 2)).forEach(function(api) {
   describe(api.name + ' Compressor tests', function() {
     var db = redis.createClient({ prefix: 'a-prefix:' })
     var mockAPI = api.server
@@ -2708,8 +2789,12 @@ apis.concat(revertedCompressionApis).forEach(function(api) {
             .then(function() {
               return new Promise(function(resolve) {
                 setImmediate(function() {
-                  var expectation = !// !(already compressed || would compress even if already compressed)
-                  (api.name.indexOf('(after)') !== -1 || api.name.indexOf('restify+gzip') !== -1)
+                  var expectation = !// !(already compressed koa+compression/(after) || would compress even if already compressed)
+                  (
+                    api.name.indexOf('koa+compression') !== -1 ||
+                    api.name.indexOf('(after)') !== -1 ||
+                    api.name.indexOf('restify+gzip') !== -1
+                  )
                   resolve(expect(that.wasCompressorCalled).to.equal(expectation))
                 })
               })
@@ -2773,6 +2858,8 @@ apis.forEach(function(api) {
             'express+gzip': 'deflate',
             restify: 'identity',
             'restify+gzip': 'gzip',
+            koa: 'identity',
+            'koa+compression': 'deflate',
           }[api.name]
 
           return request(app)
@@ -2796,18 +2883,25 @@ apis.forEach(function(api) {
                 .expect(200, movies)
                 .then(function(res) {
                   expect(app.requestsProcessed).to.equal(1)
-                  expect(res.headers['content-encoding'] || 'identity').to.equal(
-                    hasBrotliSupport() ? 'br' : 'gzip'
-                  )
+                  // currently koa+compression will send compressed stream to apicache
+                  if (api.name === 'koa+compression') {
+                    expect(res.headers['content-encoding'] || 'identity').to.equal('deflate')
+                  } else {
+                    expect(res.headers['content-encoding'] || 'identity').to.equal(
+                      hasBrotliSupport() ? 'br' : 'gzip'
+                    )
+                  }
                 })
 
-              // some node versions support brotli although supertest still doesnt
+              // some node versions support brotli although supertest still doesntt
               if (hasBrotliSupport()) {
                 var encoding = {
                   express: 'identity',
                   'express+gzip': 'gzip',
                   restify: 'identity',
                   'restify+gzip': 'gzip',
+                  koa: 'identity',
+                  'koa+compression': 'gzip',
                 }[api.name]
 
                 return ret.catch(function() {
@@ -3841,7 +3935,12 @@ describe('.get(key)', function() {
                     .get(this.cache.getKey({ method: 'GET', url: '/api/movies' }))
                     .then(function(value) {
                       expect(value.status).to.equal(200)
-                      expect(value.headers['content-encoding'] || 'identity').to.equal('identity')
+                      if (api.name === 'koa+compression') {
+                        // supertest doesnt support br yet - hasBrotliSupport() ? 'br' : 'gzip'
+                        expect(value.headers['content-encoding'] || 'identity').to.equal('gzip')
+                      } else {
+                        expect(value.headers['content-encoding'] || 'identity').to.equal('identity')
+                      }
                       expect(value.headers['cache-control']).to.equal('max-age=2, must-revalidate')
                       expect(value.data).to.eql(movies)
                       expect(value.timestamp).to.be.a('number')

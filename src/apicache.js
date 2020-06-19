@@ -11,6 +11,8 @@ var pkg = require('../package.json')
 var helpers = require('./helpers')
 var setLongTimeout = helpers.setLongTimeout
 var clearLongTimeout = helpers.clearLongTimeout
+var delegateLazily = helpers.delegateLazily
+var isKoa = helpers.isKoa
 
 var FIVE_MINUTES = 5 * 60 * 1000
 var SAFE_HTTP_METHODS = ['GET', 'HEAD', 'OPTIONS']
@@ -495,6 +497,7 @@ function ApiCache() {
     if (toggle && !toggle(request, response)) {
       return next()
     }
+    if (isKoa(request)) request.respond = false
 
     var isMarkedToCache = !!request.apicacheResPatches
     if (isMarkedToCache) {
@@ -506,7 +509,7 @@ function ApiCache() {
 
     if (options.afterHit) {
       response.on('finish', function() {
-        options.afterHit(request, response)
+        isKoa(request) ? options.afterHit(request) : options.afterHit(request, response)
       })
     }
 
@@ -714,7 +717,7 @@ function ApiCache() {
 
     var appendice
     if (typeof append === 'function') {
-      appendice = append(req, res)
+      appendice = isKoa(req) ? append(req) : append(req, res)
       // ['x', 'y'] => req?.x?.y
     } else if (append.length > 0) {
       appendice = req
@@ -759,7 +762,10 @@ function ApiCache() {
     }
 
     if (options.interceptKeyParts) {
-      parts = options.interceptKeyParts(req, res, parts) || parts
+      parts =
+        (isKoa(req)
+          ? options.interceptKeyParts(req, parts)
+          : options.interceptKeyParts(req, res, parts)) || parts
     }
     return parts
   }
@@ -1192,6 +1198,36 @@ function ApiCache() {
     performanceArray.push(perf)
 
     var cache = function(req, res, next) {
+      if (isKoa(req)) {
+        var ctx = req
+        next = res
+        res = ctx.res
+
+        if (req.apicacheIsFrameworkAdapted) {
+          req = ctx.req
+        } else {
+          req.apicacheIsFrameworkAdapted = true
+          ;[ctx, ctx.req, ctx.request, ctx.res, ctx.response].forEach(function(obj) {
+            if ('apicacheGroup' in obj && !('apicacheGroup' in ctx.state)) {
+              ctx.state.apicacheGroup = obj.apicacheGroup
+            }
+            Object.defineProperty(obj, 'apicacheGroup', {
+              get() {
+                return ctx.state.apicacheGroup
+              },
+              set(v) {
+                ctx.state.apicacheGroup = v
+              },
+            })
+          })
+
+          // It will e.g. delegate req.query to ctx.query which delegates to ctx.request.query
+          // And make it work as ctx for getting it's future props at options.append, for instance
+          // at a downstream apicache middleware
+          req = delegateLazily(ctx.req, ctx)
+        }
+      }
+
       function bypass() {
         debug('bypass detected, skipping cache.')
         return next()
@@ -1258,7 +1294,9 @@ function ApiCache() {
       }
 
       function maybeMakeResponseCacheable() {
-        if (!req.id) req.id = generateUuidV4()
+        if (!req.id) {
+          req.id = generateUuidV4()
+        }
 
         return isSameRequestStackAllowedToMakeResponseCacheable().then(function(isAllowed) {
           if (isAllowed) return Promise.resolve(_makeResponseCacheable())
@@ -1297,6 +1335,7 @@ function ApiCache() {
                 debug(err)
                 if (res.headersSent) {
                   perf.miss(key)
+                  if (isKoa(req)) req.respond = false
                   return res.end()
                 }
 
@@ -1309,8 +1348,10 @@ function ApiCache() {
           .catch(function(err) {
             debug(err)
             perf.miss(key)
-            if (res.headersSent) res.end()
-            else next()
+            if (res.headersSent) {
+              if (isKoa(req)) req.respond = false
+              res.end()
+            } else return next()
           })
       }
 

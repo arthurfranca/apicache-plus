@@ -30,17 +30,9 @@ module.exports = function(app) {
     app.requestsProcessed++
 
     res.setHeader('Content-Type', 'text/plain')
-    if (process.versions.node.indexOf('4') === 0) {
-      /* eslint-disable node/no-deprecated-api */
-      res.write(new Buffer([0x61]))
-      res.write(new Buffer([0x62]))
-      res.write(new Buffer([0x63]))
-      /* eslint-enable node/no-deprecated-api */
-    } else {
-      res.write(Buffer.from('a'))
-      res.write(Buffer.from('b'))
-      res.write(Buffer.from('c'))
-    }
+    res.write(Buffer.from('a'))
+    res.write(Buffer.from('b'))
+    res.write(Buffer.from('c'))
 
     res.end()
   })

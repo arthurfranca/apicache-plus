@@ -259,8 +259,17 @@ import apicache from 'apicache-plus'
 apicache.options({ debug: true })
 ```
 
+## Official framework support
+
+- Express
+- Restify
+- Koa
+
+**Note:** When using Koa, set `ctx.state.apicacheGroup` instead of `req.apicacheGroup`. Also, consider option values such as `(req, res) => {}` as being `(ctx) => {}`. You can use Koa style naturally e.g. set `ctx.body` instead of calling `res.send`
+
 ### Changelog
 
+- **v2.2.0** - add Koa 2 support
 - **v2.1.3** - fix _acquireLockWithId reference (thanks [@it4mag](https://github.com/it4mag))
 - **v2.1.2** - add compressible missing dependency (thanks [@rrgarciach](https://github.com/rrgarciach))
 - **v2.1.1** - fix RedisCache#releaseLockWithId

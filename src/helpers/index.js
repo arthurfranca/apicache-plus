@@ -1,5 +1,11 @@
-var timers = require('./timers')
+var framework = require('./framework')
+var object = require('./object')
+var timer = require('./timer')
+
 module.exports = {
-  setLongTimeout: timers.setLongTimeout,
-  clearLongTimeout: timers.clearLongTimeout,
+  isKoa: framework.isKoa,
+  delegate: object.delegate,
+  delegateLazily: object.delegateLazily,
+  setLongTimeout: timer.setLongTimeout,
+  clearLongTimeout: timer.clearLongTimeout,
 }
