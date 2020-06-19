@@ -2290,7 +2290,7 @@ describe('.middleware {MIDDLEWARE}', function() {
             app.apicache.getKey({ method: 'get', url: '/api/movies' })
           )
           done()
-        }, 40)
+        }, 50)
       })
 
       it('run provided function after cache hit', function(done) {
