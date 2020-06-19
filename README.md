@@ -269,8 +269,9 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.2.1** - fix head request handler
 - **v2.2.0** - add Koa 2 support
-- **v2.1.3** - fix _acquireLockWithId reference (thanks [@it4mag](https://github.com/it4mag))
+- **v2.1.3** - fix acquireLockWithId reference (thanks [@it4mag](https://github.com/it4mag))
 - **v2.1.2** - add compressible missing dependency (thanks [@rrgarciach](https://github.com/rrgarciach))
 - **v2.1.1** - fix RedisCache#releaseLockWithId
 - **v2.1.0** - add optimizeDuration option and set 'private' cache when fit
