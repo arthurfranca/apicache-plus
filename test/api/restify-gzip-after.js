@@ -32,6 +32,9 @@ function MockAPI(expiration, options, toggle, localOptions) {
     app.head.apply(this, arguments)
     _get.apply(this, arguments)
   }
+  app.get.restoreDefaultBehavior = function() {
+    app.get = _get
+  }
   // ADD API ROUTES
   app = addRoutes(app)
 
