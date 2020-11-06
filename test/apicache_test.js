@@ -3389,7 +3389,10 @@ describe('Redis support', function() {
         var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
         function resolveWhenKeyIsCached() {
           return app.apicache.getIndex().then(function(keys) {
-            if (keys.all.length === 0) {
+            if (
+              keys.all.length === 0 ||
+              keys.all.some(k => k.startsWith('lock-with-id:make-cacheable:'))
+            ) {
               return new Promise(function(resolve) {
                 setTimeout(function() {
                   resolve(resolveWhenKeyIsCached())
@@ -3466,7 +3469,10 @@ describe('Redis support', function() {
         var app = mockAPI.create('1 minute', { redisClient: db, redisPrefix: 'a-prefix:' })
         function resolveWhenKeyIsCached() {
           return app.apicache.getIndex().then(function(keys) {
-            if (keys.all.length === 0) {
+            if (
+              keys.all.length === 0 ||
+              keys.all.some(k => k.startsWith('lock-with-id:make-cacheable:'))
+            ) {
               return new Promise(function(resolve) {
                 setTimeout(function() {
                   resolve(resolveWhenKeyIsCached())
@@ -3659,7 +3665,7 @@ describe('.set(key, value, duration, group, expirationCallback)', function() {
   ]
   configs.forEach(function(meta) {
     beforeEach(function() {
-      this.cache = require('../src/apicache').newInstance()
+      this.cache = require('../src/apicache').newInstance(meta.config)
     })
 
     afterEach(function() {
@@ -3802,7 +3808,7 @@ describe('.has(key)', function() {
 
   configs.forEach(function(meta) {
     beforeEach(function() {
-      this.cache = require('../src/apicache').newInstance()
+      this.cache = require('../src/apicache').newInstance(meta.config)
     })
 
     afterEach(function() {
@@ -3838,11 +3844,14 @@ describe('.has(key)', function() {
             describe(api.name + ' tests', function() {
               beforeEach(function() {
                 var mockAPI = api.server
-                var app = mockAPI.create('10 seconds')
+                var app = mockAPI.create('10 seconds', meta.config)
                 this.cache = app.apicache
                 function resolveWhenKeyIsCached() {
                   return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
-                    if (keys.all.length === 0) {
+                    if (
+                      keys.all.length === 0 ||
+                      keys.all.some(k => k.startsWith('lock-with-id:make-cacheable:'))
+                    ) {
                       return new Promise(function(resolve) {
                         setTimeout(function() {
                           resolve(resolveWhenKeyIsCached())
@@ -3893,7 +3902,7 @@ describe('.get(key)', function() {
 
   configs.forEach(function(meta) {
     beforeEach(function() {
-      this.cache = require('../src/apicache').newInstance()
+      this.cache = require('../src/apicache').newInstance(meta.config)
     })
 
     afterEach(function() {
@@ -3919,7 +3928,7 @@ describe('.get(key)', function() {
                 return that.cache.get('a key')
               })
               .then(function(value) {
-                expect(value).to.be.equal('a value')
+                expect(value).to.equal('a value')
               })
           })
         })
@@ -3930,11 +3939,14 @@ describe('.get(key)', function() {
               describe('when cache is compressed', function() {
                 beforeEach(function() {
                   var mockAPI = api.server
-                  var app = mockAPI.create('2 seconds')
+                  var app = mockAPI.create('2 seconds', meta.config)
                   this.cache = app.apicache
                   function resolveWhenKeyIsCached() {
                     return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
-                      if (keys.all.length === 0) {
+                      if (
+                        keys.all.length === 0 ||
+                        keys.all.some(k => k.startsWith('lock-with-id:make-cacheable:'))
+                      ) {
                         return new Promise(function(resolve) {
                           setTimeout(function() {
                             resolve(resolveWhenKeyIsCached())
@@ -3984,11 +3996,14 @@ describe('.get(key)', function() {
               describe("when cache isn't compressed", function() {
                 beforeEach(function() {
                   var mockAPI = api.server
-                  var app = mockAPI.create('2 seconds')
+                  var app = mockAPI.create('2 seconds', meta.config)
                   this.cache = app.apicache
                   function resolveWhenKeyIsCached() {
                     return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
-                      if (keys.all.length === 0) {
+                      if (
+                        keys.all.length === 0 ||
+                        keys.all.some(k => k.startsWith('lock-with-id:make-cacheable:'))
+                      ) {
                         return new Promise(function(resolve) {
                           setTimeout(function() {
                             resolve(resolveWhenKeyIsCached())

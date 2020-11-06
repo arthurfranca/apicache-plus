@@ -473,7 +473,7 @@ RedisCache.prototype.add = function(key, value, time, timeoutCallback, group) {
     var multi = that.redis
       .multi()
       .hset(key, 'value', value)
-      .expireat(expire)
+      .pexpireat(key, expire)
     if (group) {
       multi.hset(key, 'group', group).sadd('group:' + group, key)
     }
@@ -505,50 +505,65 @@ RedisCache.prototype.has = function(key) {
   })
 }
 
-RedisCache.prototype.get = function(key) {
-  var that = this
-  return this.getValue(key).then(function(value) {
-    var wasManuallyStoredByUserCallingSetMethod = typeof value !== 'object' || !value['data-token']
-    if (value === null || wasManuallyStoredByUserCallingSetMethod) return { value: value }
+RedisCache.prototype.get = (function() {
+  function wasManuallyStoredByUserCallingSetMethod(value) {
+    return typeof value !== 'object' || !(value || {})['data-token']
+  }
 
-    return new Promise(function(resolve, reject) {
-      that.redis.getBuffer('data:' + value['data-token'] + ':' + key, function(err, data) {
-        if (err) return reject(err)
-        value.data = data // Can be null; yet, 'data' property must be present
+  return function(key) {
+    var that = this
+    return this.getValue(key).then(function(value) {
+      if (value === null || wasManuallyStoredByUserCallingSetMethod(value)) {
+        if (!Buffer.isBuffer(value)) {
+          try {
+            value = JSON.parse(value)
+          } catch (err) {
+            that.debug('error in redisCache.get function', err)
+          }
+        }
+        return { value: value }
+      }
 
-        that.redis.pttl(key, function(err, time) {
+      return new Promise(function(resolve, reject) {
+        that.redis.getBuffer('data:' + value['data-token'] + ':' + key, function(err, data) {
           if (err) return reject(err)
-          if (time < 0) return resolve({ value: null })
+          value.data = data // Can be null; yet, 'data' property must be present
 
-          resolve({
-            value: value,
-            expire: time + Date.now(),
-            timeout: that.timers[key] || null, // available if at same node process
+          that.redis.pttl(key, function(err, time) {
+            if (err) return reject(err)
+            if (time < 0) return resolve({ value: null })
+
+            resolve({
+              value: value,
+              expire: time + Date.now(),
+              timeout: that.timers[key] || null, // available if at same node process
+            })
           })
         })
       })
     })
-  })
-}
+  }
+})()
 
 RedisCache.prototype.getValue = function(key) {
   var that = this
   return new Promise(function(resolve, reject) {
     that.redis.hgetall(key, function(err, value) {
-      if (err) reject(err)
-      else {
-        // ioredis hgetall empty value is {}, while node-redis is null
-        if (value && Object.keys(value).length > 0) {
-          var wasManuallyStoredByUserCallingSetMethod = 'value' in value
-          if (wasManuallyStoredByUserCallingSetMethod) return value.value
+      if (err) return reject(err)
 
+      // ioredis hgetall empty value is {}, while node-redis is null
+      if (value && Object.keys(value).length > 0) {
+        var wasManuallyStoredByUserCallingSetMethod = 'value' in value
+        if (wasManuallyStoredByUserCallingSetMethod) value = value.value
+        else {
           value.headers = JSON.parse(value.headers)
           value.status = parseInt(value.status, 10)
           value.timestamp = parseInt(value.timestamp, 10)
           value['data-extra-pttl'] = parseInt(value['data-extra-pttl'], 10)
-        } else value = null
-        resolve(value)
-      }
+        }
+      } else value = null
+
+      resolve(value)
     })
   })
 }
