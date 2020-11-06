@@ -269,6 +269,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.2.2** - fix redisCache.get method
 - **v2.2.1** - fix head request handler
 - **v2.2.0** - add Koa 2 support
 - **v2.1.3** - fix acquireLockWithId reference (thanks [@it4mag](https://github.com/it4mag))
