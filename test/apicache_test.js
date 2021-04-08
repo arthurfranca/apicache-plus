@@ -1484,7 +1484,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
-      it('skips updates cache when using header "x-apicache-force-fetch"', function() {
+      it('updates cache when using header "x-apicache-force-fetch"', function() {
         var app = mockAPI.create('10 seconds', { isBypassable: true })
 
         return request(app)
