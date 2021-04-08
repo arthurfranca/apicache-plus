@@ -259,6 +259,9 @@ import apicache from 'apicache-plus'
 apicache.options({ debug: true })
 ```
 
+## Client-Side Headers
+Passing header `x-apicache-force-refresh` will not only bypass the cache but it will refresh the cache  with the newly pulled data.  Whereas, `x-apicache-bypass` (with option `isBypassable`) will skip the cache to return fresh data set but doesn't change what was cached.
+
 ## Official framework support
 
 - Express
