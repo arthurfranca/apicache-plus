@@ -269,6 +269,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.2.3** - fix fetching big cached redis response
 - **v2.2.2** - fix redisCache.get method
 - **v2.2.1** - fix head request handler
 - **v2.2.0** - add Koa 2 support
