@@ -18,10 +18,10 @@ function RedisCache(options, debug) {
   })
   this.isIoRedis = !!this.redis.getBuffer
   if (!this.isIoRedis) {
-    // A compressed response can't be converted losslessly to a utf-8 string.
+    // A compressed response can't be converted losslessly to utf-8 string.
     // It can be fetched as a buffer (encoded as binary/latin1 or even utf8),
     // so use ioredis buffer returning fn versions.
-    // For node-redis, key param should be Buffer.from(key) with detect_buffers: true
+    // For node-redis v3, key param should be Buffer.from(key) with detect_buffers: true
     // or else the regular functions will return utf-8 strings
     var that = this
     var getBufferFnVersion = function(fn) {
@@ -194,7 +194,7 @@ RedisCache.prototype.createWriteStream = (function() {
             multi.pexpireat(dataKey, expireAt + dataMaxAllowedTimeToRead)
 
             multi.exec(function(err, res) {
-              if (err || res === null) cb(err)
+              if (err || [null, undefined].indexOf(res) !== -1) return cb(err)
 
               if (timeoutCallback && typeof timeoutCallback === 'function') {
                 that.timers[key] = setLongTimeout(function() {
@@ -279,13 +279,6 @@ RedisCache.prototype.createWriteStream = (function() {
   }
 })()
 
-var isNodeGte10 = (function(ret) {
-  return function() {
-    if (ret !== undefined) return ret
-
-    return (ret = parseInt(process.versions.node.split('.')[0], 10) >= 10)
-  }
-})()
 RedisCache.prototype.createReadStream = function(key, dataToken, encoding, highWaterMark) {
   if (!highWaterMark) highWaterMark = DEFAULT_HIGH_WATER_MARK
   var dataKey = 'data:' + dataToken + ':' + key
@@ -302,7 +295,7 @@ RedisCache.prototype.createReadStream = function(key, dataToken, encoding, highW
   var that = this
   var start = 0
   var end = highWaterMark - 1
-  var getChunk = function() {
+  function getChunk() {
     return new Promise(function(resolve, reject) {
       try {
         that.redis.getrangeBuffer(dataKey, start, end, function(err, chunk) {
@@ -323,22 +316,21 @@ RedisCache.prototype.createReadStream = function(key, dataToken, encoding, highW
       }
     })
   }
-  var pushChunk = function(push, retry = 3) {
-    return getChunk()
-      .catch(function(err) {
-        if (retry-- === 0) throw err
+  function getChunkWithRetry(retry = 3) {
+    return getChunk().catch(function(err) {
+      if (retry-- === 0) throw err
 
-        return new Promise(function(resolve) {
-          setLongTimeout(function() {
-            resolve(pushChunk(push, retry))
-          }, 20)
-        })
+      return new Promise(function(resolve) {
+        setLongTimeout(function() {
+          resolve(getChunkWithRetry(retry))
+        }, 20)
       })
-      .then(function(chunk) {
-        var shouldPush = push(chunk)
-        // isNodeGte10() needed for keeping async chunk push
-        if (isNodeGte10() && shouldPush) return pushChunk(push)
-      })
+    })
+  }
+  function pushChunk(push) {
+    return getChunkWithRetry().then(function(chunk) {
+      return push(chunk)
+    })
   }
 
   return new stream.Readable({
@@ -416,7 +408,7 @@ RedisCache.prototype.clear = function(target) {
 
         return clearGroup(group, cursor, match, count).then(function() {
           multi.exec(function(err, res) {
-            if (err || res === null) return reject(err)
+            if (err || [null, undefined].indexOf(res) !== -1) return reject(err)
             resolve(deleteCount)
           })
         })
@@ -442,7 +434,7 @@ RedisCache.prototype.clear = function(target) {
                 .del(target)
                 .scard(group)
                 .exec(function(err, res) {
-                  if (err || res === null) return reject(err)
+                  if (err || [null, undefined].indexOf(res) !== -1) return reject(err)
 
                   clearLongTimeout(that.timers[target])
                   var deleteCount = parseInt((res[2] || [null, 0])[1], 10)
@@ -479,7 +471,7 @@ RedisCache.prototype.add = function(key, value, time, timeoutCallback, group) {
     }
 
     multi.exec(function(err, res) {
-      if (err || res === null) return reject(err)
+      if (err || [null, undefined].indexOf(res) !== -1) return reject(err)
 
       if (timeoutCallback && typeof timeoutCallback === 'function') {
         that.timers[key] = setTimeout(function() {

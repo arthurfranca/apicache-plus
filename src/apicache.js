@@ -420,7 +420,9 @@ function ApiCache() {
               })
               .on('finish', function() {
                 afterTryingToCache()
-                debugCacheAddition(cache, key, strDuration, req, res, options)
+                if (!wstream.isLocked) {
+                  debugCacheAddition(cache, key, strDuration, req, res, options)
+                }
               })
               .on('unpipe', afterTryingToCache)
           })

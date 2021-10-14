@@ -48,14 +48,14 @@ app.get('/will-be-cached', (req, res) => {
 
 ```js
 import apicache from 'apicache-plus'
-import redis from 'redis'
+import Redis from 'ioredis'
 import express from 'express'
 const app = express()
 
 // if redisClient option is defined, apicache will use redis client
 // instead of built-in memory store
 const cacheWithRedis = apicache.options({
-  redisClient: redis.createClient({ detect_buffers: true }),
+  redisClient: new Redis(),
 })
 
 app.get('/will-be-cached', cacheWithRedis('5 minutes'), (req, res) => {
@@ -63,8 +63,8 @@ app.get('/will-be-cached', cacheWithRedis('5 minutes'), (req, res) => {
 })
 ```
 
-**Note:** If using node-redis client, it is important to set `detect_buffers: true` option.
-ioredis client is also supported.
+**Note:** We recommend ioredis for best support.
+If using node-redis v3, it is important to set `detect_buffers: true`. Use `legacyMode: true` if v4+.
 
 #### Works great with compression middleware for lightning fast responses
 
