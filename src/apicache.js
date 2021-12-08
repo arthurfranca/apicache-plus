@@ -1303,6 +1303,11 @@ function ApiCache() {
         return isSameRequestStackAllowedToMakeResponseCacheable().then(function(isAllowed) {
           if (isAllowed) return Promise.resolve(_makeResponseCacheable())
           else {
+            // don't wait for first concurrent request finish its response
+            // (e.g. don't wait for a full download of a large file),
+            // but also don't let this one add to cache
+            if (SAFE_HTTP_METHODS.indexOf(req.method) !== -1) return next()
+
             // give time to prior request finish caching
             return new Promise(function(resolve) {
               setLongTimeout(function() {
