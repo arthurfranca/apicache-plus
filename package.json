@@ -1,6 +1,6 @@
 {
   "name": "apicache-plus",
-  "version": "2.2.3",
+  "version": "2.3.0",
   "scripts": {
     "lint": "eslint .",
     "test": "nyc mocha test --ignore 'test/api/**' 'test/setup.js' --require 'test/setup.js' --recursive",
