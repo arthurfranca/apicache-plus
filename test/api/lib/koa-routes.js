@@ -83,7 +83,7 @@ module.exports = function(app) {
     ctx.body = movies[ctx.params.index]
   })
 
-  app.get('/api/bigresponse', function(ctx) {
+  function bigResponseHandler(ctx) {
     app.requestsProcessed++
     ctx.state.apicacheGroup = 'bigresponsegroup'
 
@@ -102,7 +102,9 @@ module.exports = function(app) {
 
     ctx.set('Content-Type', 'text/plain')
     ctx.body = rstream
-  })
+  }
+  app.get('/api/bigresponse', bigResponseHandler)
+  app.post('/api/bigresponse', bigResponseHandler)
 
   app.get('/api/slowresponse', function(ctx) {
     app.requestsProcessed++

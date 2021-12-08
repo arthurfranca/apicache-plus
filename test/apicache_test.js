@@ -2791,21 +2791,68 @@ describe('.middleware {MIDDLEWARE}', function() {
               })
             }
 
-            it('is idempotent', function() {
-              var app = mockAPI.create('2 seconds', meta.config)
+            describe('when calling a safe http method', function() {
+              it("isn't idempotent", function() {
+                var app = mockAPI.create('2 seconds', meta.config)
+                function resolveWhenKeyIsCached() {
+                  return Promise.resolve(app.apicache.getIndex()).then(function(keys) {
+                    if (
+                      keys.all.length === 0 ||
+                      keys.all.some(k => k.startsWith('lock-with-id:make-cacheable:'))
+                    ) {
+                      return new Promise(function(resolve) {
+                        setTimeout(function() {
+                          resolve(resolveWhenKeyIsCached())
+                        }, 5)
+                      })
+                    }
+                  })
+                }
 
-              return Promise.all([
-                request(app)
-                  .get('/api/bigresponse')
-                  .expect(200),
-                request(app)
-                  .get('/api/bigresponse')
-                  .expect(200),
-              ]).then(function(responses) {
-                responses.forEach(function(res) {
-                  expect(res.text.slice(-5)).to.equal('final')
+                return Promise.all([
+                  request(app)
+                    .get('/api/bigresponse')
+                    .expect(200),
+                  request(app)
+                    .get('/api/bigresponse')
+                    .expect(200),
+                ])
+                  .then(function(responses) {
+                    responses.forEach(function(res) {
+                      expect(res.text.slice(-5)).to.equal('final')
+                    })
+                    expect(app.requestsProcessed).to.equal(2)
+                  })
+                  .then(resolveWhenKeyIsCached)
+                  .then(function() {
+                    return request(app)
+                      .get('/api/bigresponse')
+                      .expect(200)
+                  })
+                  .then(function(res) {
+                    expect(res.text.slice(-5)).to.equal('final')
+                    expect(app.requestsProcessed).to.equal(2)
+                  })
+              })
+            })
+
+            describe('when calling an unsafe http method', function() {
+              it('is idempotent', function() {
+                var app = mockAPI.create('2 seconds', meta.config)
+
+                return Promise.all([
+                  request(app)
+                    .post('/api/bigresponse')
+                    .expect(200),
+                  request(app)
+                    .post('/api/bigresponse')
+                    .expect(200),
+                ]).then(function(responses) {
+                  responses.forEach(function(res) {
+                    expect(res.text.slice(-5)).to.equal('final')
+                  })
+                  expect(app.requestsProcessed).to.equal(1)
                 })
-                expect(app.requestsProcessed).to.equal(1)
               })
             })
           })

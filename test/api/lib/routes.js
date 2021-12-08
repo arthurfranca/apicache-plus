@@ -79,7 +79,7 @@ module.exports = function(app) {
     res.json(movies[req.params.index])
   })
 
-  app.get('/api/bigresponse', function(req, res) {
+  function bigResponseHandler(req, res) {
     app.requestsProcessed++
     req.apicacheGroup = 'bigresponsegroup'
 
@@ -98,7 +98,9 @@ module.exports = function(app) {
 
     res.writeHead(200, { 'Content-Type': 'text/plain' })
     rstream.pipe(res)
-  })
+  }
+  app.get('/api/bigresponse', bigResponseHandler)
+  app.post('/api/bigresponse', bigResponseHandler)
 
   app.get('/api/slowresponse', function(req, res) {
     app.requestsProcessed++
