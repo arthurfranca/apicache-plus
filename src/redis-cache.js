@@ -453,12 +453,12 @@ RedisCache.prototype.clear = function(target) {
 RedisCache.prototype.add = function(key, value, time, timeoutCallback, group) {
   var that = this
   return new Promise(function(resolve, reject) {
-    if (typeof value !== 'string' && !Buffer.isBuffer(value)) {
+    if (!Buffer.isBuffer(value)) {
       try {
         if (value === undefined) value = Buffer.alloc(0)
         else value = JSON.stringify(value)
       } catch (err) {
-        value = String(value)
+        value = JSON.stringify(String(value))
       }
     }
     var expire = time + Date.now()
