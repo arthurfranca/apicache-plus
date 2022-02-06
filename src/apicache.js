@@ -1240,8 +1240,7 @@ function ApiCache() {
       if (
         opt.isBypassable &&
         (req.headers['cache-control'] === 'no-store' ||
-          ['1', 'true'].indexOf(req.headers['x-apicache-bypass']) !== -1 ||
-          ['1', 'true'].indexOf(req.headers['x-apicache-force-fetch']) !== -1)
+          ['1', 'true'].indexOf(req.headers['x-apicache-bypass']) !== -1)
       ) {
         return bypass()
       }
@@ -1363,6 +1362,10 @@ function ApiCache() {
           })
       }
 
+      if (['1', 'true'].indexOf(req.headers['x-apicache-force-fetch']) !== -1) {
+        debug('force fetch detected, refreshing cache.')
+        return maybeMakeResponseCacheable()
+      }
       return attemptCacheHit()
     }
 

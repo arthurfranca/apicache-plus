@@ -1484,7 +1484,7 @@ describe('.middleware {MIDDLEWARE}', function() {
           })
       })
 
-      it('skips cache when using header "x-apicache-force-fetch (legacy)"', function() {
+      it('updates cache when using header "x-apicache-force-fetch"', function() {
         var app = mockAPI.create('10 seconds', { isBypassable: true })
 
         return request(app)
@@ -1539,28 +1539,6 @@ describe('.middleware {MIDDLEWARE}', function() {
             return request(app)
               .get('/api/movies')
               .set('x-apicache-bypass', true)
-              .set('Accept', 'application/json')
-              .expect('Content-Type', /json/)
-              .expect('apicache-store', 'memory')
-              .expect('apicache-version', pkg.version)
-              .expect(200, movies)
-              .then(function(res) {
-                expect(app.requestsProcessed).to.equal(1)
-              })
-          })
-      })
-
-      it('prevent cache skipping when using header "x-apicache-force-fetch (legacy)" with isBypassable "false"', function() {
-        var app = mockAPI.create('10 seconds', { isBypassable: false })
-
-        return request(app)
-          .get('/api/movies')
-          .expect(200, movies)
-          .then(assertNumRequestsProcessed(app, 1))
-          .then(function() {
-            return request(app)
-              .get('/api/movies')
-              .set('x-apicache-force-fetch', true)
               .set('Accept', 'application/json')
               .expect('Content-Type', /json/)
               .expect('apicache-store', 'memory')
