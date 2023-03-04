@@ -71,7 +71,7 @@
   "dependencies": {
     "accepts": "^1.3.7",
     "compressible": "^2.0.18",
-    "json.sortify": "^2.2.2",
+    "json.sortify": "https://github.com/visiongeist/JSON.sortify/tree/patch-1",
     "redlock": "^4.1.0",
     "uuid": "^8.0.0"
   },
