@@ -1,12 +1,15 @@
+[![CI](https://github.com/nguyenngoclongdev/apicacheable/actions/workflows/ci.yml/badge.svg)](https://github.com/nguyenngoclongdev/apicacheable/actions/workflows/ci.yml)
+[![GitHub license](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](https://github.com/nguyenngoclongdev/apicacheable/)
+
+[![npm version](https://img.shields.io/npm/v/apicacheable.svg?style=flat-square)](https://www.npmjs.org/package/apicacheable)
+[![Gitpod Ready-to-Code](https://img.shields.io/badge/Gitpod-Ready--to--Code-blue?logo=gitpod&style=flat-square)](https://gitpod.io/#https://github.com/nguyenngoclongdev/apicacheable)
+[![install size](https://img.shields.io/badge/dynamic/json?url=https://packagephobia.com/v2/api.json?p=apicacheable&query=$.install.pretty&label=install%20size&style=flat-square)](https://packagephobia.now.sh/result?p=apicacheable)
+[![npm bundle size](https://img.shields.io/bundlephobia/minzip/apicacheable?style=flat-square)](https://bundlephobia.com/package/apicacheable@latest)
+[![npm downloads](https://img.shields.io/npm/dt/apicacheable.svg?style=flat-square)](https://npm-stat.com/charts.html?package=apicacheable)
+
 # Effortless api response caching for Express/Node using plain-english durations.
 
 #### Supports Redis or built-in memory engine with auto-clearing.
-
-[![npm version](https://badge.fury.io/js/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
-[![node version support](https://img.shields.io/node/v/apicache-plus.svg)](https://www.npmjs.com/package/apicache-plus)
-[![Build Status via Travis CI](https://app.travis-ci.com/arthurfranca/apicache-plus.svg?branch=master)](https://app.travis-ci.com/arthurfranca/apicache-plus)
-[![Known Vulnerabilities](https://snyk.io/test/github/arthurfranca/apicache-plus/badge.svg?targetFile=package.json)](https://snyk.io/test/github/arthurfranca/apicache-plus?targetFile=package.json)
-[![NPM downloads](https://img.shields.io/npm/dt/apicache-plus.svg?style=flat)](https://www.npmjs.com/package/apicache-plus)
 
 ## Why?
 
