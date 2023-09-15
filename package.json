@@ -5,7 +5,8 @@
     "lint": "eslint .",
     "test": "nyc mocha test --ignore 'test/api/**' 'test/setup.js' --require 'test/setup.js' --recursive",
     "test:watch": "npm run test -- --watch",
-    "coverage": "nyc report --reporter=text-lcov | coveralls"
+    "coverage": "nyc report --reporter=text-lcov | coveralls",
+    "cs": "changeset"
   },
   "engines": {
     "node": ">=6.2.0",
@@ -36,6 +37,7 @@
     "email": "arturoalemanha@gmail.com"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.26.1",
     "@babel/core": "^7.10.2",
     "@babel/preset-env": "^7.10.2",
     "@babel/register": "^7.10.1",
