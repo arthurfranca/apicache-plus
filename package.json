@@ -1,6 +1,6 @@
 {
   "name": "apicacheable",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "scripts": {
     "lint": "eslint .",
     "test": "nyc mocha test --ignore 'test/api/**' 'test/setup.js' --require 'test/setup.js' --recursive",
