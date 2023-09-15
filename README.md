@@ -232,7 +232,8 @@ app.get('/api/books', async function(req, res) {
   },
   afterHit:             fn(req, res),        // run function after cache hits
   optimizeDuration:     false|true,          // it can lower memory comsumption, when not using a cache client with a max memory policy (e.g. LRU key eviction), by overwriting some cache durations
-  shouldSyncExpiration: false|true           // force max-age syncing with internal cache expiration
+  shouldSyncExpiration: false|true,           // force max-age syncing with internal cache expiration
+  compression:          true|false            // disabled compression of cached data before store
 }
 ```
 
@@ -269,6 +270,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
+- **v2.3.2** - add options to enabled/disabled compression of cached data before store
 - **v2.3.1** - improve serialization when manually adding to redis cache
 - **v2.3.0** - enhance concurrency behavior
 - **v2.2.3** - fix fetching big cached redis response

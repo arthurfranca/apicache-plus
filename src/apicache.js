@@ -94,6 +94,7 @@ function ApiCache() {
     afterHit: null,
     trackPerformance: false,
     optimizeDuration: false,
+    compression: true,
   }
 
   var middlewareOptions = []
@@ -429,6 +430,9 @@ function ApiCache() {
 
         return (wstream = cacheWstream.then(function(wstream) {
           if (wstream.isLocked) return wstream
+
+          // ignore compression based on option
+          if (options.compression === false) return wstream
 
           // also indicates it may be already compressed
           var otherMiddlewareMayWantToChangeCompression =
@@ -1312,7 +1316,7 @@ function ApiCache() {
             return new Promise(function(resolve) {
               setLongTimeout(function() {
                 resolve(attemptCacheHit())
-              }, 10)
+              }, 50) // fix due to no need too fast, delay between concurrent request is acceptable
             })
           }
         })

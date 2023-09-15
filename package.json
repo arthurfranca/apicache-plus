@@ -16,7 +16,7 @@
   "main": "./src/apicache.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/arthurfranca/apicache-plus.git"
+    "url": "https://github.com/nguyenngoclongdev/apicacheable.git"
   },
   "keywords": [
     "cache",
@@ -33,7 +33,7 @@
   "author": "Arthur A. França <arturoalemanha@gmail.com> (https://github.com/arthurfranca)",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/arthurfranca/apicache-plus/issues",
+    "url": "https://github.com/nguyenngoclongdev/apicacheable/issues",
     "email": "arturoalemanha@gmail.com"
   },
   "devDependencies": {
