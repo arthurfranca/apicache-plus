@@ -273,7 +273,7 @@ apicache.options({ debug: true })
 
 ### Changelog
 
-- **v2.3.2** - add options to enabled/disabled compression of cached data before store
+- **v2.3.2** - add options to enabled/disabled compression of cached data before store (thanks [@ninhnda](https://github.com/ninhnda))
 - **v2.3.1** - improve serialization when manually adding to redis cache
 - **v2.3.0** - enhance concurrency behavior
 - **v2.2.3** - fix fetching big cached redis response
